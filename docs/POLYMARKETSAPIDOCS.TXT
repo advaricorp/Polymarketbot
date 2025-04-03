@@ -1,0 +1,2430 @@
+Okay, here is the complete Polymarket API documentation, structured and formatted for clarity and potential use by another LLM.
+
+```markdown
+# POLYMARKETS API DOCUMENTATION
+
+## Introduction
+
+Welcome to Polymarket's docs! Here developers can find all the information they need for interacting with Polymarket. This includes documentation on market discovery, resolution, trading etc. Whether you are an academic researcher a market maker or an indy developer, this documentation should provide you what you need to get started.
+
+All the code you find linked here and on our GitHub is open source and free to use. If you have any questions please join our discord and direct your questions to the `#devs` channel.
+
+---
+
+## Access Status
+
+Please regularly check the access status of your account with the `ban-status/` endpoint. If the endpoint returns a value of `true` for `cert_required`, proof of residence is required and failure to provide it within 14 days will result in a close only status.
+
+To certify you are not breaching ToS please send an email to `ops@polymarket.com` with your address, form of id (passport, license, or other) and proof of residence (recent utility bill, bank bill, phone bill). You will also be asked to sign and return a non-US certification in subsequent communications. Once complete, within 24 hours the `cert_required` status should be marked to `false`.
+
+### Check Certification Required Status
+
+This endpoint returns the value of `cert_required` by signer address. Please, check this regularly and if it returns a value of `true` for `cert_required`, refer to the process above.
+
+**HTTP Request**
+`GET {clob-endpoint}/auth/ban-status/cert-required?address={signer_address}`
+
+**URL Parameters**
+
+| Parameter       | Required | Type   | Description             |
+| :-------------- | :------- | :----- | :---------------------- |
+| `signer_address`| yes      | string | Your Polygon address.   |
+
+**Example Request**
+`GET https://clob.polymarket.com/auth/ban-status/cert-required?address=0x123...abc`
+
+**Response Format**
+
+```json
+{
+  "cert_required": false | true
+}
+```
+
+### Get Closed Only Mode Status
+
+**This endpoint requires an L2 Header.**
+
+Get the value of the `closed_only` mode flag for the authenticated user.
+
+**HTTP Request**
+`GET {clob-endpoint}/auth/ban-status/closed-only`
+
+**Python Client Example**
+
+```python
+closed_only_mode = client.get_closed_only_mode()
+print(closed_only_mode)
+```
+
+**Response Format**
+
+```json
+{
+  "closed_only": true | false
+}
+```
+
+---
+
+## CLOB API (Central Limit Order Book)
+
+### Introduction
+
+Welcome to the Polymarket Order Book API! In this documentation you will find overviews, explanations, examples and annotations that aim to make interacting with the order book a breeze. In this section we will provide a general overview of the Polymarket Order Book and the purpose of the API before diving deep into the API and clients in following sections.
+
+### System Overview
+
+Polymarket's Order Book, also referred to as the "CLOB" (Central Limit Order Book) or "BLOB" (Binary Limit Order Book), is hybrid-decentralized wherein there is an operator that provides off-chain matching/ordering services while settlement/execution happens on-chain, non-custodially according to instructions provided by users in the form of signed order messages. This decentralized exchange model provides users with a powerful, non-custodial exchange experience.
+
+Underlying the exchange system is a custom **Exchange contract** that facilitates atomic swaps (settlement) between binary Outcome Tokens (both CTF ERC1155 assets and ERC20 PToken assets) and a collateral asset (ERC20) according to signed limit orders. The Exchange contract is purpose built for binary markets (instruments that allow collateral to be split into positions and conversely positions to be merged into collateral with the two positions ultimately being settled to a price equal to 1). This allows "unification" of order books such that orders for a position and its complement can be matched. Explicitly, the Exchange allows for matching operations that include a mint/merge operation which allows orders for complementary outcome tokens to be crossed.
+
+Orders are represented as signed typed structured data (**EIP712**). When orders are matched, one side is considered the **maker** and the other side is considered the **taker**. The relationship is always either one to one or many to one (maker to taker) and any price improvement is captured by the taker. The **Operator** is responsible for matching, ordering, and submitting matched trades to the underlying blockchain network for execution. As such, order placement and cancellation can happen immediately off-chain while only the settlement action must occur on-chain.
+
+### API Overview
+
+The Polymarket Order Book API is a set of endpoints that allow market makers, traders, and other Polymarket users to programmatically create and manage orders for markets via access to the API provided by the operator.
+
+Orders for any amount can be created and listed, or fetched and read from the order book for a given market. The API also provides data on all available markets, market prices, and order history through REST and WSS endpoints.
+
+### Security
+
+Polymarket's Exchange contract has been audited by Chainsecurity. You can find the audit report [here](https://chainsecurity.com/security-audit/polymarket-exchange-contract/).
+
+The operator has no special privileges outside of ordering. This means that the only actions you must trust them with is enforcing correct ordering, not censoring, and removing cancellations (orders can also be cancelled on-chain if operator is not trusted). If the operator is not doing any of these activities fairly a user can simply stop interacting with the operator. The operator is never able to set prices for users, or execute any trade on the user's behalf outside of the signed limit orders the user creates.
+
+### Fees
+
+**Schedule** (Subject to change)
+
+| Volume Level | Maker Fee Base Rate (bps) | Taker Fee Base Rate (bps) |
+| :----------- | :------------------------ | :------------------------ |
+| >0 USDC      | 0                         | 0                         |
+
+**Overview**
+
+Fees are levied in the output asset (proceeds). Fees for binary options with a complementary relationship (ie A + A' = C) must be symmetric to preserve market integrity. Symmetric means that someone selling 100 shares of A @ $0.99 should pay the same fee value as someone buying 100 A' @ $0.01. An intuition for this requires understanding that minting/merging a complementary token set for collateral can happen at any time. Fees are thus implemented in the following manner:
+
+*   If buying (ie receiving A or A'), the fee is levied on the proceed tokens.
+*   If selling (ie receiving C), the fee is levied on the proceed collateral.
+
+The base fee rate (`baseFeeRate`) is signed into the order struct. The base fee rate corresponds to the % fee rate paid by traders when the price of the two tokens is equal (ie 0.50 and 0.50). Moving away from a centered price, the following formulas are used to calculate the fees, making sure to maintain symmetry.
+
+**Case 1: If selling outcome tokens (base) for collateral (quote):**
+
+`feeQuote = baseRate * min(price, 1 - price) * size`
+
+**Case 2: If buying outcome tokens (base) with collateral (quote):**
+
+`feeBase = baseRate * min(price, 1 - price) * size / price`
+
+### Additional Resources
+
+*   **Exchange contract source code:** [Link to GitHub (assumed, add specific link if known)](https://github.com/Polymarket/polymarket-exchange)
+*   **Exchange contract documentation:** [Link to Docs (assumed, add specific link if known)]()
+*   **Deployments:**
+    *   **Mumbai:** `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E`
+    *   **Polygon:** `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E`
+*   **Status:** <https://status-clob.polymarket.com/>
+
+### Clients
+
+Polymarket has implemented reference clients that allow programmatic use of the API:
+
+*   **clob-client (Typescript):** [GitHub Link (assumed)](https://github.com/Polymarket/clob-client)
+*   **py-clob-client (Python):** [GitHub Link (assumed)](https://github.com/Polymarket/py-clob-client)
+
+**Installation (Python)**
+
+```bash
+pip install py-clob-client
+```
+
+**Initialization (Python)**
+
+```python
+from py_clob_client.client import ClobClient
+from py_clob_client.constants import POLYMARKET_PROXY_ADDRESS # Assuming this constant exists
+
+# --- Configuration ---
+# Mainnet CLOB endpoint
+host: str = "https://clob.polymarket.com/"
+# Replace with your private key (KEEP THIS SECRET)
+key: str = "0x..."
+# Polygon Mainnet Chain ID
+chain_id: int = 137
+# Mumbai Testnet Chain ID
+# chain_id: int = 80001
+
+# --- Client Initialization Examples ---
+
+# Option 1: Trading directly from an EOA (Externally Owned Account)
+# Ensure the EOA address derived from 'key' holds the funds (USDC, Outcome Tokens)
+# and has set necessary allowances for the Exchange contract.
+client_eoa = ClobClient(host, key=key, chain_id=chain_id)
+print(f"Initialized EOA Client for address: {client_eoa.get_address()}")
+
+# Option 2: Trading using a Polymarket Proxy associated with an Email/Magic account
+# 'key' should be the private key exported from Magic.
+# 'funder' is the address of the Polymarket Proxy Wallet created via the website.
+# You must provide the correct proxy address for your account.
+# Example proxy address (replace with your actual proxy address):
+proxy_address_magic = "0x..." # Find this on Polygonscan or via Polymarket UI
+client_magic = ClobClient(host, key=key, chain_id=chain_id, signature_type=1, funder=proxy_address_magic)
+print(f"Initialized Magic Link Proxy Client. Signer: {client_magic.signer.address}, Funder: {client_magic.funder}")
+
+
+# Option 3: Trading using a Polymarket Proxy associated with a Browser Wallet (Metamask, Coinbase Wallet, etc.)
+# 'key' should be the private key exported from the Browser Wallet controlling the proxy.
+# 'funder' is the address of the Polymarket Gnosis Safe Proxy Wallet created via the website.
+# You must provide the correct proxy address for your account.
+# Example proxy address (replace with your actual proxy address):
+proxy_address_gnosis = "0x..." # Find this on Polygonscan or via Polymarket UI
+client_gnosis = ClobClient(host, key=key, chain_id=chain_id, signature_type=2, funder=proxy_address_gnosis)
+print(f"Initialized Gnosis Safe Proxy Client. Signer: {client_gnosis.signer.address}, Funder: {client_gnosis.funder}")
+
+# Select the client you intend to use for subsequent operations
+# client = client_eoa  # or client_magic, or client_gnosis
+```
+
+*Note: `POLYMARKET_PROXY_ADDRESS` mentioned in the original text seems like a placeholder; users need their specific proxy address.*
+
+### Order Utils
+
+Polymarket has implemented utility libraries to programmatically sign and generate orders:
+
+*   **clob-order-utils (Typescript):** [GitHub Link (assumed)](https://github.com/Polymarket/clob-order-utils)
+*   **python-order-utils (Python):** [GitHub Link (assumed)](https://github.com/Polymarket/python-order-utils)
+*   **go-order-utils (Golang):** [GitHub Link (assumed)](https://github.com/Polymarket/go-order-utils)
+
+These libraries handle the complexity of structuring, hashing, and signing orders according to the EIP712 standard and the Exchange contract requirements.
+
+---
+
+## CLOB API Endpoints
+
+### Base URLs
+
+*   **REST:** `{clob-endpoint}` -> `https://clob.polymarket.com/`
+*   **Websocket:** `{wss-channel}` -> `wss://ws-subscriptions-clob.polymarket.com/ws/`
+
+### Authentication
+
+There are two levels of authentication for the Polymarket CLOB. Client libraries handle signing automatically.
+
+**L1: Private Key Authentication**
+
+*   **Purpose:** Highest level, controls funds non-custodially. Required for signing orders and managing API keys. The operator never controls user funds.
+*   **Mechanism:** EIP712 signature using the account's Polygon private key.
+*   **Required For:** Placing orders (signing), Creating/Revoking API keys.
+
+**L1 Header Structure**
+
+| Header         | Required? | Description                                           |
+| :------------- | :-------- | :---------------------------------------------------- |
+| `POLY_ADDRESS`   | yes       | Polygon address of the signer                         |
+| `POLY_SIGNATURE` | yes       | EIP712 signature of the `ClobAuth` struct (see below) |
+| `POLY_TIMESTAMP` | yes       | Current UNIX timestamp (string)                       |
+| `POLY_NONCE`     | yes       | Nonce (uint256). Default 0.                         |
+
+**EIP712 `ClobAuth` Struct for L1 Signature**
+
+```typescript
+const domain = {
+  name: "ClobAuthDomain",
+  version: "1",
+  chainId: chainId, // Polygon ChainID 137 or Mumbai 80001
+};
+
+const types = {
+  ClobAuth: [
+    { name: "address", type: "address" },
+    { name: "timestamp", type: "string" }, // Ensure this is a string
+    { name: "nonce", type: "uint256" },
+    { name: "message", type: "string" },
+  ],
+};
+
+const value = {
+  address: signingAddress, // The Signing address
+  timestamp: ts, // The UNIX timestamp used in the header (as string)
+  nonce: nonce, // The nonce used (as uint256)
+  message: "This message attests that I control the given wallet", // Static message
+};
+
+// Example using ethers.js (conceptual)
+// const sig = await signer._signTypedData(domain, types, value);
+```
+
+*Implementations exist in the Typescript and Python clients.*
+
+**L2: API Key Authentication**
+
+*   **Purpose:** Authenticates API requests to private endpoints (e.g., canceling orders, retrieving account-specific data) that don't require direct fund control.
+*   **Credentials:** Generated via `POST /auth/api-key`. Includes `key` (UUID), `secret` (for HMAC, not sent), `passphrase` (sent with requests).
+*   **Mechanism:** HMAC signature generated using the API `secret`.
+
+**L2 Header Structure**
+
+| Header          | Required? | Description                           |
+| :-------------- | :-------- | :------------------------------------ |
+| `POLY_ADDRESS`    | yes       | Polygon address associated with key |
+| `POLY_SIGNATURE`  | yes       | HMAC signature for the request        |
+| `POLY_TIMESTAMP`  | yes       | Request UNIX timestamp (string)       |
+| `POLY_API_KEY`    | yes       | Polymarket API key (UUID)           |
+| `POLY_PASSPHRASE` | yes       | Polymarket API key passphrase       |
+
+*(The HMAC signature calculation details are typically handled by the client libraries).*
+
+### API Key Management
+
+#### Create API Key
+
+**This endpoint requires an L1 Header.**
+
+Create new API key credentials for a user. The server uses the L1 signature as a seed to deterministically generate credentials.
+
+**HTTP Request**
+`POST {clob-endpoint}/auth/api-key`
+
+**Python Client Example**
+
+```python
+# Ensure client is initialized with L1 capability (private key)
+creds = client.create_api_key()
+print(creds)
+# Store these credentials securely!
+api_key = creds['apiKey']
+secret = creds['secret']
+passphrase = creds['passphrase']
+```
+
+**Response Format**
+
+```json
+{
+  "apiKey": "xxxxxxxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxx",
+  "secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=",
+  "passphrase": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}
+```
+
+#### Derive API Key
+
+**This endpoint requires an L1 Header.**
+
+Derive an existing API key for an address and nonce (default nonce is 0). Useful if you lost the credentials but still have the private key.
+
+**HTTP Request**
+`GET {clob-endpoint}/auth/derive-api-key?nonce={nonce}`
+
+**Python Client Example**
+
+```python
+# Derives key for nonce 0 by default
+creds = client.derive_api_key(nonce=0)
+print(creds)
+```
+
+**Response Format**
+
+```json
+{
+  "apiKey": "xxxxxxxxx-xxxxx-xxxxxx-xxxx-xxxxxxxxxxxx",
+  "secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=",
+  "passphrase": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}
+```
+
+#### Get API Keys
+
+**This endpoint requires an L2 Header.**
+
+Get all API key IDs (UUIDs) associated with the Polygon address used in the L2 authentication.
+
+**HTTP Request**
+`GET {clob-endpoint}/auth/api-keys`
+
+**Python Client Example**
+
+```python
+# Assumes client is initialized with L2 creds (apiKey, secret, passphrase)
+# or can generate L2 headers on the fly if L1 key is present
+api_keys_list = client.get_api_keys()
+print(api_keys_list)
+```
+
+**Response Format**
+
+```json
+{
+  "apiKeys": [ "xxxxxxxxx-xxxxx-xxxxxx-xxxx-xxxxxxxxxxxx", ... ]
+}
+```
+
+#### Delete API Key
+
+**This endpoint requires an L2 Header.**
+
+Deletes the *specific API key* used to authenticate this request.
+
+**HTTP Request**
+`DELETE {clob-endpoint}/auth/api-key`
+
+**Python Client Example**
+
+```python
+# Client must be authenticated with the key you want to delete
+resp = client.delete_api_key()
+print(resp)
+```
+
+**Response Format**
+
+If successful, returns the string "OK".
+
+```
+"OK"
+```
+
+---
+
+## CLOB Orders
+
+### Overview
+
+All orders are expressed as limit orders but can be marketable (i.e., act like market orders if the price crosses the spread). The underlying order primitive must be structured, hashed, and signed according to the on-chain Exchange contract specification (EIP712). Using the provided client libraries (Typescript, Python, Golang) is highly recommended to handle this complexity.
+
+### Allowances
+
+Before placing orders, the `funder` address (either your EOA or your Proxy Wallet address) must grant sufficient token allowances to the **Exchange contract** (`0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E` on Polygon/Mumbai).
+
+*   **Buying Outcome Tokens:** Requires USDC allowance >= order cost (`price * size`).
+*   **Selling Outcome Tokens:** Requires Outcome Token (ERC1155) allowance >= order size.
+
+Allowances permit the Exchange contract to transfer assets during settlement according to your signed orders.
+
+### Signature Types
+
+Orders must specify the signature type used. Client libraries abstract this based on initialization.
+
+| Type              | ID | Description                                                                  | Client Init Parameter |
+| :---------------- | :- | :--------------------------------------------------------------------------- | :-------------------- |
+| EOA               | 0  | EIP712 signature signed directly by an Externally Owned Account.             | `signature_type=0` (or default) |
+| POLY\_PROXY       | 1  | EIP712 signature signed by the EOA controlling a Polymarket Proxy (MagicLink). | `signature_type=1`    |
+| POLY\_GNOSIS\_SAFE| 2  | EIP712 signature signed by the EOA controlling a Polymarket Gnosis Safe (Browser Wallet). | `signature_type=2`    |
+
+### Validity Checks
+
+The CLOB operator continuously monitors orders for validity:
+*   Underlying `funder` balances.
+*   Token allowances for the Exchange contract.
+*   On-chain order cancellations.
+
+Intentionally submitting orders that fail these checks may result in blacklisting.
+
+Additionally, you cannot place orders that commit more funds than your available balance *for that specific market side*.
+
+**Max Order Size Calculation (Conceptual):**
+`maxOrderSize = underlyingAssetBalance - sum(existing_open_orderSize - existing_open_orderFillAmount)` for orders on the same side in the same market.
+
+### Create and Place an Order
+
+**This endpoint requires an L2 Header.**
+
+Creates and places a signed order onto the CLOB. Use client libraries to create the `signed_order` object first. Market orders are achieved by submitting marketable limit orders (e.g., a buy order with a price higher than the best ask, or a sell order lower than the best bid).
+
+**HTTP Request**
+`POST {clob-endpoint}/order`
+
+**Request Payload Parameters**
+
+| Name        | Required | Type   | Description                                   |
+| :---------- | :------- | :----- | :-------------------------------------------- |
+| `order`     | yes      | Order  | Signed order object (see below)               |
+| `owner`     | yes      | string | API key ID (`apiKey`) of the order owner.     |
+| `orderType` | yes      | string | Order type: `"GTC"`, `"GTD"`, `"FOK"` (see below) |
+
+**Order Object Structure (Signed Payload)**
+
+| Name            | Required | Type    | Description                                                            | Handled by Client? |
+| :-------------- | :------- | :------ | :--------------------------------------------------------------------- | :----------------- |
+| `salt`          | yes      | integer | Random salt for order uniqueness                                       | Yes                |
+| `maker`         | yes      | string  | Maker address (`funder` address holding assets)                        | Yes (from init)    |
+| `signer`        | yes      | string  | Signing address (EOA controlling `funder`)                             | Yes (from init)    |
+| `taker`         | yes      | string  | Taker address (typically the operator's address, `0x...`)             | Yes                |
+| `tokenId`       | yes      | string  | ERC1155 Token ID of the conditional token being traded                 | No (provide via args)|
+| `makerAmount`   | yes      | string  | Max amount maker is willing to sell (sell order) / pay (buy order)     | Yes (from args)    |
+| `takerAmount`   | yes      | string  | Min amount taker must pay (sell order) / maker receive (buy order)     | Yes (from args)    |
+| `expiration`    | yes      | string  | UNIX expiration timestamp (seconds). Use "0" for GTC.                  | Yes (from args)    |
+| `nonce`         | yes      | string  | Maker's Exchange nonce for order replay protection                     | Yes                |
+| `feeRateBps`    | yes      | string  | Fee rate in basis points (e.g., "0" for 0 bps)                         | Yes                |
+| `side`          | yes      | string  | `"BUY"` or `"SELL"` enum index (handled internally by client)          | Yes (from args)    |
+| `signatureType` | yes      | integer | Signature type enum index (0, 1, or 2)                                 | Yes (from init)    |
+| `signature`     | yes      | string  | Hex encoded EIP712 signature                                           | Yes                |
+
+**Order Types:**
+
+*   **GTC (Good-Til-Cancelled):** A limit order active until filled or cancelled. Set `expiration` to `"0"`.
+*   **GTD (Good-Til-Date):** A limit order active until a specific UTC timestamp (`expiration`), unless filled or cancelled earlier. **Note:** There's a 1-minute security threshold; to expire in 30 seconds, set `expiration` to `now + 1 minute + 30 seconds`.
+*   **FOK (Fill-Or-Kill):** A market order (buy in dollars, sell in shares) that must execute *immediately* and *entirely*, or it's cancelled. Use `client.create_market_order` which sets an appropriate (marketable) price.
+
+**Python Client Examples**
+
+```python
+from py_clob_client.clob_types import OrderArgs, MarketOrderArgs, OrderType
+from py_clob_client.order_builder.constants import BUY, SELL
+import time
+
+# --- Common Variables ---
+# Replace with the actual token ID for the outcome you want to trade
+token_id = "71321045679252212594626385532706912750332728571942532289631379312455583992563" # Example YES token
+
+# --- Example 1: GTC Limit Order ---
+print("\nPlacing GTC Order...")
+gtc_order_args = OrderArgs(
+    price=0.50,      # Price per share
+    size=100.0,      # Number of shares
+    side=BUY,
+    token_id=token_id,
+    # expiration is implicitly "0" for GTC if not provided
+)
+signed_gtc_order = client.create_order(gtc_order_args)
+resp_gtc = client.post_order(signed_gtc_order, OrderType.GTC)
+print("GTC Response:", resp_gtc)
+
+# --- Example 2: GTD Limit Order ---
+print("\nPlacing GTD Order...")
+# Expire in approx 90 seconds (60s threshold + 30s desired lifetime)
+gtd_expiration = str(int(time.time()) + 90)
+gtd_order_args = OrderArgs(
+    price=0.51,
+    size=50.0,
+    side=SELL,
+    token_id=token_id,
+    expiration=gtd_expiration
+)
+signed_gtd_order = client.create_order(gtd_order_args)
+resp_gtd = client.post_order(signed_gtd_order, OrderType.GTD)
+print("GTD Response:", resp_gtd)
+
+
+# --- Example 3: FOK Market Buy Order ---
+print("\nPlacing FOK Buy Order...")
+fok_buy_args = MarketOrderArgs(
+    token_id=token_id,
+    amount=10.0, # Spend $10 USDC
+    side=BUY,
+)
+# The client calculates a highly marketable price (e.g., $1.00) for FOK buys
+signed_fok_buy_order = client.create_market_order(fok_buy_args)
+resp_fok_buy = client.post_order(signed_fok_buy_order, OrderType.FOK)
+print("FOK Buy Response:", resp_fok_buy)
+
+
+# --- Example 4: FOK Market Sell Order ---
+print("\nPlacing FOK Sell Order...")
+fok_sell_args = MarketOrderArgs(
+    token_id=token_id,
+    amount=25.0, # Sell 25 shares
+    side=SELL,
+)
+# The client calculates a highly marketable price (e.g., $0.00) for FOK sells
+signed_fok_sell_order = client.create_market_order(fok_sell_args)
+resp_fok_sell = client.post_order(signed_fok_sell_order, OrderType.FOK)
+print("FOK Sell Response:", resp_fok_sell)
+```
+
+**Response Format (Order Placement)**
+
+| Name               | Type     | Description                                                                                             |
+| :----------------- | :------- | :------------------------------------------------------------------------------------------------------ |
+| `success`          | boolean  | `true` if server accepted request, `false` on server-side error.                                        |
+| `errorMsg`         | string   | Error message if placement failed (`success: false`) or had client-side issues (`success: true`). Empty on success. |
+| `orderID`          | string   | Unique ID (hash) of the order if accepted.                                                              |
+| `transactionsHashes`| string[] | Array of settlement transaction hashes if the order was marketable and matched immediately.             |
+| `status`           | string   | Initial order status (see below).                                                                         |
+
+**Order Placement Insert Errors/Messages (`errorMsg`)**
+
+| Error                           | Failure? | Message Example                                           | Description                                               |
+| :------------------------------ | :------- | :-------------------------------------------------------- | :-------------------------------------------------------- |
+| `INVALID_ORDER_MIN_TICK_SIZE`   | yes      | `order is invalid. Price () breaks minimum tick size rule`| Price precision doesn't match market's tick size.       |
+| `INVALID_ORDER_MIN_SIZE`        | yes      | `order is invalid. Size () lower than the minimum`        | Order size below market's minimum requirement.            |
+| `INVALID_ORDER_DUPLICATED`      | yes      | `order is invalid. Duplicated.`                           | Exact same order (hash) already exists.                   |
+| `INVALID_ORDER_NOT_ENOUGH_BALANCE`| yes      | `not enough balance / allowance`                          | Funder lacks sufficient balance or allowance.             |
+| `INVALID_ORDER_EXPIRATION`      | yes      | `invalid expiration`                                      | Expiration time is in the past.                           |
+| `INSERT_ORDER_ERROR`            | yes      | `could not insert order`                                  | Internal server error during insertion.                 |
+| `EXECUTION_ERROR`               | yes      | `could not run the execution`                             | Internal server error during trade matching/execution.    |
+| `ORDER_DELAYED`                 | no       | `order match delayed due to market conditions`            | Marketable order placed during delay period (e.g., in-game). |
+| `DELAYING_ORDER_ERROR`          | yes      | `error delaying the order`                                | Internal server error while handling delay.               |
+| `FOK_ORDER_NOT_FILLED_ERROR`    | yes      | `order couldn't be fully filled...`                       | FOK order could not be filled entirely, so cancelled.     |
+| `MARKET_NOT_READY`              | no       | `the market is not yet ready...`                          | Market is not yet accepting orders (e.g., pre-launch).  |
+
+**Order Placement Insert Statuses (`status`)**
+
+| Status      | Description                                                           |
+| :---------- | :-------------------------------------------------------------------- |
+| `live`      | Order placed successfully and resting on the book.                  |
+| `matched`   | Order was marketable and matched immediately against existing orders. |
+| `delayed`   | Order was marketable but placed during a delay period.              |
+| `unmatched` | Order was marketable, but delaying failed; placement unsuccessful.  |
+
+### Get Order
+
+**This endpoint requires an L2 Header.**
+
+Retrieve details of a single order by its ID (hash).
+
+**HTTP Request**
+`GET {clob-endpoint}/data/order/{order_hash}`
+
+**URL Parameters**
+
+| Parameter    | Required | Type   | Description      |
+| :----------- | :------- | :----- | :--------------- |
+| `order_hash` | yes      | string | ID/hash of order |
+
+**Python Client Example**
+
+```python
+order_id_to_get = "0xb816482a5187a3d3db49cbaf6fe3ddf24f53e6c712b5a4bf5e01d0ec7b11dabc" # Example
+order_details = client.get_order(order_id_to_get)
+print(order_details)
+```
+
+**Response Format**
+
+Returns an `OpenOrder` object if found, otherwise `null`.
+
+**OpenOrder Object Structure**
+
+| Name              | Type     | Description                                                     |
+| :---------------- | :------- | :-------------------------------------------------------------- |
+| `id`              | string   | Order ID (hash).                                                |
+| `status`          | string   | Current status (`live`, `filled`, `cancelled`, etc.).           |
+| `market`          | string   | Market identifier (condition ID).                               |
+| `asset_id`        | string   | Token ID of the outcome token.                                  |
+| `price`           | string   | Order price.                                                    |
+| `side`            | string   | `"BUY"` or `"SELL"`.                                            |
+| `original_size`   | string   | Initial order size at placement.                                |
+| `size_matched`    | string   | Amount of the order that has been filled/matched.               |
+| `outcome`         | string   | Human-readable outcome (e.g., "YES", "NO").                   |
+| `maker_address`   | string   | Funder address (EOA or Proxy).                                  |
+| `owner`           | string   | API key ID (`apiKey`) of the owner.                             |
+| `expiration`      | string   | UNIX timestamp when the order expires/expired (0 if GTC).     |
+| `type`            | string   | Order type (`"GTC"`, `"FOK"`, `"GTD"`).                           |
+| `created_at`      | string   | UNIX timestamp when the order was created.                      |
+| `associate_trades`| string[] | List of Trade IDs where this order was involved (as maker).   |
+
+### Check if an Order is Scoring
+
+**This endpoint requires an L2 Header.**
+
+Checks if a specific resting limit order currently qualifies for liquidity rewards based on market conditions (spread, size).
+
+**HTTP Request**
+`GET {clob-endpoint}/order-scoring?order_id={order_id}`
+
+**Query Parameters**
+
+| Parameter | Required | Type   | Description      |
+| :-------- | :------- | :----- | :--------------- |
+| `order_id`| yes      | string | ID/hash of order |
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import OrderScoringParams
+
+order_id_to_check = "0x..." # Example Order ID
+is_scoring = client.is_order_scoring(OrderScoringParams(orderId=order_id_to_check))
+print(f"Order {order_id_to_check} scoring: {is_scoring}")
+
+```
+
+**Response Format**
+
+```json
+{
+  "scoring": true | false
+}
+```
+
+*(The Python client might directly return the boolean value).*
+
+### Check if Orders are Scoring
+
+**This endpoint requires an L2 Header.**
+
+Checks multiple orders simultaneously for liquidity reward scoring eligibility.
+
+**HTTP Request**
+`POST {clob-endpoint}/orders-scoring`
+
+**Request Body**
+
+```json
+{
+  "orderIds": ["0x...", "0x...", ...]
+}
+```
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import OrdersScoringParams
+
+order_ids_to_check = ["0x...", "0x..."] # Example Order IDs
+scoring_results = client.are_orders_scoring(OrdersScoringParams(orderIds=order_ids_to_check))
+print(scoring_results)
+```
+
+**Response Format**
+
+A dictionary mapping order IDs to their scoring status.
+
+```json
+{
+  "0x...": true,
+  "0x...": false
+}
+```
+
+### Get Active Orders
+
+**This endpoint requires an L2 Header.**
+
+Retrieve *your* active (open) orders, optionally filtered by market or asset ID.
+
+**HTTP Request**
+`GET {clob-endpoint}/data/orders`
+
+**Query Parameters**
+
+| Parameter | Required | Type   | Description                                    |
+| :-------- | :------- | :----- | :--------------------------------------------- |
+| `market`  | no       | string | Filter by market identifier (condition ID).    |
+| `asset_id`| no       | string | Filter by specific outcome token ID (asset ID). |
+| `id`      | no       | string | Filter by a specific order ID (rarely used here). |
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import OpenOrderParams
+
+# Example: Get all active orders for a specific market
+market_condition_id = "0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af" # Example
+active_orders = client.get_orders(
+    OpenOrderParams(
+        market=market_condition_id,
+    )
+)
+print(f"Active orders for market {market_condition_id}:")
+for order in active_orders:
+    print(order)
+
+# Example: Get all active orders across all markets
+# all_active_orders = client.get_orders()
+# print("All active orders:", all_active_orders)
+```
+
+**Response Format**
+
+A list of `OpenOrder` objects matching the filters.
+
+```json
+[
+  { ... OpenOrder object ... },
+  { ... OpenOrder object ... },
+  ...
+]
+```
+
+### Cancel an Order
+
+**This endpoint requires an L2 Header.**
+
+Cancel a specific open order by its ID.
+
+**HTTP Request**
+`DELETE {clob-endpoint}/order`
+
+**Request Body**
+
+```json
+{
+  "orderID": "0x..." // ID of the order to cancel
+}
+```
+
+**Python Client Example**
+
+```python
+order_id_to_cancel = "0x38a73eed1e6d177545e9ab027abddfb7e08dbe975fa777123b1752d203d6ac88" # Example
+cancel_response = client.cancel(order_id=order_id_to_cancel)
+print(cancel_response)
+```
+
+**Response Format**
+
+| Name           | Type   | Description                                                      |
+| :------------- | :----- | :--------------------------------------------------------------- |
+| `canceled`     | string[] | List containing the ID of the successfully cancelled order.      |
+| `not_canceled` | { }    | Map of order ID to reason if cancellation failed (should be empty here). |
+
+**Example Success Response**
+
+```json
+{
+  "canceled": ["0x38a73eed1e6d177545e9ab027abddfb7e08dbe975fa777123b1752d203d6ac88"],
+  "not_canceled": {}
+}
+```
+
+### Cancel Multiple Orders
+
+**This endpoint requires an L2 Header.**
+
+Cancel a list of specific open orders by their IDs.
+
+**HTTP Request**
+`DELETE {clob-endpoint}/orders`
+
+**Request Body**
+
+```json
+[
+  "0x...", // ID of order 1
+  "0x...", // ID of order 2
+  ...
+]
+```
+
+**Python Client Example**
+
+```python
+order_ids_to_cancel = [
+    "0x38a73eed1e6d177545e9ab027abddfb7e08dbe975fa777123b1752d203d6ac88",
+    "0xaaaa..." # Example IDs
+]
+cancel_response = client.cancel_orders(order_ids=order_ids_to_cancel)
+print(cancel_response)
+```
+
+**Response Format**
+
+| Name           | Type   | Description                                                               |
+| :------------- | :----- | :------------------------------------------------------------------------ |
+| `canceled`     | string[] | List of order IDs that were successfully cancelled.                       |
+| `not_canceled` | { }    | Map of order ID to reason for any orders that could not be cancelled.   |
+
+**Example Response**
+
+```json
+{
+  "canceled": ["0x38a73eed1e6d177545e9ab027abddfb7e08dbe975fa777123b1752d203d6ac88"],
+  "not_canceled": {
+    "0xaaaa...": "Order not found or already filled/cancelled"
+  }
+}
+```
+
+### Cancel All Orders
+
+**This endpoint requires an L2 Header.**
+
+Cancel *all* open orders associated with the authenticated API key across *all* markets. Use with caution!
+
+**HTTP Request**
+`DELETE {clob-endpoint}/cancel-all`
+
+**Python Client Example**
+
+```python
+print("Cancelling ALL open orders...")
+cancel_response = client.cancel_all()
+print(cancel_response)
+print("Done!")
+```
+
+**Response Format**
+
+Same as "Cancel Multiple Orders": lists successfully cancelled orders and provides reasons for any that couldn't be cancelled.
+
+| Name           | Type   | Description                                                               |
+| :------------- | :----- | :------------------------------------------------------------------------ |
+| `canceled`     | string[] | List of order IDs that were successfully cancelled.                       |
+| `not_canceled` | { }    | Map of order ID to reason for any orders that could not be cancelled.   |
+
+### Cancel Orders by Market
+
+**This endpoint requires an L2 Header.**
+
+Cancel all open orders for the authenticated user within a specific market, optionally filtered by a specific asset ID (outcome token).
+
+**HTTP Request**
+`DELETE {clob-endpoint}/cancel-market-orders`
+
+**Request Body**
+
+```json
+{
+  "market": "0x...",   // Required: Condition ID of the market
+  "asset_id": "..."  // Optional: Token ID of the specific outcome
+}
+```
+
+**Python Client Example**
+
+```python
+market_to_cancel = "0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af" # Example market
+# asset_to_cancel = "52114319501245915516055106046884209969926127482827954674443846427813813222426" # Optional asset
+
+# Cancel all orders in the market
+cancel_response = client.cancel_market_orders(market=market_to_cancel)
+print(f"Cancel response for market {market_to_cancel}:", cancel_response)
+
+# Cancel only orders for a specific asset in the market
+# cancel_response_asset = client.cancel_market_orders(market=market_to_cancel, asset_id=asset_to_cancel)
+# print(f"Cancel response for asset {asset_to_cancel} in market {market_to_cancel}:", cancel_response_asset)
+
+```
+
+**Response Format**
+
+Same as "Cancel Multiple Orders": lists successfully cancelled orders and provides reasons for any that couldn't be cancelled.
+
+| Name           | Type   | Description                                                               |
+| :------------- | :----- | :------------------------------------------------------------------------ |
+| `canceled`     | string[] | List of order IDs that were successfully cancelled.                       |
+| `not_canceled` | { }    | Map of order ID to reason for any orders that could not be cancelled.   |
+
+---
+
+## CLOB Trades
+
+### Overview
+
+Historical trade data is available via the REST API. A trade occurs when a **taker** submits a marketable limit order that matches against one or more resting **maker** limit orders.
+
+Due to blockchain gas limits, a single large market order might be executed as multiple on-chain transactions. These result in separate `Trade` objects in the API response. You can reconcile these parts into a single logical trade using the following fields:
+*   `taker_order_id`: The ID of the original market order.
+*   `match_time`: The timestamp when the match occurred.
+*   `bucket_index`: An incrementing index (0, 1, 2...) for parts of the same logical trade.
+
+Combine `Trade` objects with the same `taker_order_id` and `match_time`, ordered by `bucket_index`, to reconstruct the full trade client-side if needed.
+
+### Trade Statuses
+
+| Status      | Terminal? | Description                                                                          |
+| :---------- | :-------- | :----------------------------------------------------------------------------------- |
+| `MATCHED`   | no        | Matched off-chain, sent to executor service for on-chain submission.                 |
+| `MINED`     | no        | Transaction included in a block, but before finality threshold.                      |
+| `CONFIRMED` | yes       | Transaction achieved strong probabilistic finality and was successful.               |
+| `RETRYING`  | no        | On-chain transaction failed (revert/reorg); operator is retrying submission.         |
+| `FAILED`    | yes       | Trade ultimately failed after retries and will not be processed further.             |
+
+### Get Trades
+
+**This endpoint requires an L2 Header.**
+
+Retrieve historical trades involving the authenticated user's address (as either maker or taker), with optional filtering.
+
+**HTTP Request**
+`GET {clob-endpoint}/data/trades`
+
+**Query Parameters**
+
+| Name    | Required       | Type   | Description                                                                 |
+| :------ | :------------- | :----- | :-------------------------------------------------------------------------- |
+| `id`    | no             | string | Fetch a specific trade by its ID.                                           |
+| `taker` | taker or maker | string | Filter by address as the taker (initiator) of the trade.                    |
+| `maker` | taker or maker | string | Filter by address as a maker (provider of liquidity) involved in the trade. |
+| `market`| no             | string | Filter by market identifier (condition ID).                                 |
+| `before`| no             | string | UNIX timestamp; include trades matched *before* this time.                  |
+| `after` | no             | string | UNIX timestamp; include trades matched *after* this time.                   |
+
+*Note: You must provide either `taker` or `maker` address (usually the authenticated user's address).*
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import TradeParams
+
+my_address = client.get_address()
+market_condition_id = "0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af" # Example
+
+# Get trades where I was the maker in a specific market
+my_maker_trades = client.get_trades(
+    TradeParams(
+        maker=my_address, # Use 'maker' instead of 'maker_address' per client type hint
+        market=market_condition_id,
+    ),
+)
+print(f"My maker trades for market {market_condition_id}:")
+# print(my_maker_trades) # Can be very verbose
+
+# Get trades where I was the taker across all markets
+my_taker_trades = client.get_trades(
+    TradeParams(
+        taker=my_address, # Use 'taker' instead of 'taker_address'
+    ),
+)
+print(f"\nMy taker trades (all markets):")
+# print(my_taker_trades)
+```
+
+**Response Format**
+
+A list of `Trade` objects matching the filters.
+
+```json
+[
+  { ... Trade object ... },
+  { ... Trade object ... },
+  ...
+]
+```
+
+**Trade Object Structure**
+
+| Name               | Type         | Description                                                                  |
+| :----------------- | :----------- | :--------------------------------------------------------------------------- |
+| `id`               | string       | Unique trade identifier.                                                     |
+| `taker_order_id`   | string       | Hash of the taker's market order that initiated the trade.                   |
+| `market`           | string       | Market identifier (condition ID).                                            |
+| `asset_id`         | string       | Asset ID (token ID) of the *taker's* order.                                  |
+| `side`             | string       | `"BUY"` or `"SELL"` (from the taker's perspective).                            |
+| `size`             | string       | Total size filled in this trade (or part of trade if bucketed).              |
+| `fee_rate_bps`     | string       | Fees paid by the *taker* in basis points.                                    |
+| `price`            | string       | Limit price of the *taker's* order.                                          |
+| `status`           | string       | Current trade status (e.g., `"CONFIRMED"`, `"MATCHED"`).                       |
+| `match_time`       | string       | UNIX timestamp when the trade was matched off-chain.                         |
+| `last_update`      | string       | UNIX timestamp of the last status update.                                    |
+| `outcome`          | string       | Human-readable outcome corresponding to the `asset_id`.                      |
+| `maker_address`    | string       | Funder address of the *taker*. (**Note:** Name seems confusing, confirm this). |
+| `owner`            | string       | API key ID (`apiKey`) of the *taker*.                                        |
+| `transaction_hash` | string       | On-chain transaction hash where the trade was executed (if `CONFIRMED`).     |
+| `bucket_index`     | integer      | Index for multi-transaction trades (0, 1, 2...).                             |
+| `maker_orders`     | MakerOrder[] | List of maker orders filled by this taker order (see below).                 |
+| `type`             | string       | Perspective: `"TAKER"` if you initiated, `"MAKER"` if your resting order was hit. |
+
+**MakerOrder Object Structure (within Trade object)**
+
+| Name             | Type   | Description                                                    |
+| :--------------- | :----- | :------------------------------------------------------------- |
+| `order_id`       | string | ID of the maker's resting limit order.                         |
+| `maker_address`  | string | Funder address of the maker.                                   |
+| `owner`          | string | API key ID (`apiKey`) of the maker.                            |
+| `matched_amount` | string | Portion of the maker order's size filled in this trade.        |
+| `fee_rate_bps`   | string | Fees paid by the *maker* for this fill, in basis points.       |
+| `price`          | string | Price of the maker's limit order.                              |
+| `asset_id`       | string | Token ID of the maker's order.                                 |
+| `outcome`        | string | Human-readable outcome of the maker's order.                   |
+
+---
+
+## CLOB Markets
+
+Endpoints for discovering available markets on the CLOB.
+
+### Get Markets
+
+Retrieve a paginated list of available CLOB markets with full details.
+
+**HTTP Request**
+`GET {clob-endpoint}/markets?next_cursor={next_cursor}`
+
+**Query Parameters**
+
+| Name          | Required | Type   | Description                                                    |
+| :------------ | :------- | :----- | :------------------------------------------------------------- |
+| `next_cursor` | no       | string | Cursor for pagination. Use value from previous response. Empty/omit for first page. |
+
+**Python Client Example**
+
+```python
+all_markets = []
+next_cursor = ""
+
+while True:
+    print(f"Fetching markets with cursor: '{next_cursor}'")
+    resp = client.get_markets(next_cursor=next_cursor)
+    all_markets.extend(resp.get('data', []))
+    next_cursor = resp.get('next_cursor', '')
+    # 'LTE=' is the typical end-of-list cursor, but check explicitly
+    if not next_cursor or next_cursor == 'LTE=':
+        break
+
+print(f"Fetched {len(all_markets)} markets in total.")
+# print(all_markets[0]) # Print details of the first market found
+```
+
+**Response Format**
+
+```json
+{
+  "limit": 100, // Example limit per page
+  "count": 50,  // Example count on this page
+  "next_cursor": "...", // Base64 encoded cursor for next page, or 'LTE='/'empty' if last page
+  "data": [
+    { ... Market object ... },
+    { ... Market object ... },
+    ...
+  ]
+}
+```
+
+**Market Object Structure (Full)**
+
+| Name                   | Type      | Description                                                                      |
+| :--------------------- | :-------- | :------------------------------------------------------------------------------- |
+| `condition_id`         | string    | Unique market identifier (also the CTF `conditionId`).                           |
+| `question_id`          | string    | Unique question identifier (used to derive `condition_id`).                        |
+| `tokens`               | Token[2]  | Array of 2 Token objects (YES/NO) for the market (see below).                  |
+| `rewards`              | Rewards   | Rewards configuration for liquidity mining (see below).                            |
+| `minimum_order_size`   | string    | Minimum size (in shares) for placing limit orders.                               |
+| `minimum_tick_size`    | string    | Smallest price increment allowed (e.g., "0.01", "0.001").                          |
+| `description`          | string    | Market description/rules.                                                          |
+| `category`             | string    | Market category (e.g., "Sports", "Politics").                                     |
+| `end_date_iso`         | string    | ISO 8601 string of market end/resolution date.                                   |
+| `game_start_time`      | string    | ISO 8601 string when in-game delay might activate (if applicable).                 |
+| `question`             | string    | The market question.                                                             |
+| `market_slug`          | string    | URL-friendly slug for the market.                                                |
+| `min_incentive_size`   | string    | Minimum resting order size (shares) to qualify for liquidity rewards.              |
+| `max_incentive_spread` | string    | Maximum spread (in cents, e.g., "0.03" for 3c) from midpoint for reward eligibility. |
+| `active`               | boolean   | `true` if the market is currently active for trading.                            |
+| `closed`               | boolean   | `true` if the market is closed (resolved or past end date).                      |
+| `seconds_delay`        | integer   | Duration (seconds) of matching delay applied during `game_start_time`.           |
+| `icon`                 | string    | URL reference to the market icon image.                                          |
+| `fpmm`                 | string    | Address of the associated Fixed Product Market Maker (FPMM) contract.            |
+
+**Token Object Structure (within Market)**
+
+| Name      | Type   | Description                               |
+| :-------- | :----- | :---------------------------------------- |
+| `token_id`| string | ERC1155 ID for this outcome token.        |
+| `outcome` | string | Human-readable outcome (e.g., "YES", "NO"). |
+
+**Rewards Object Structure (within Market)**
+
+| Name                 | Type   | Description                                                              |
+| :------------------- | :----- | :----------------------------------------------------------------------- |
+| `min_size`           | number | (Legacy/Deprecated? See `min_incentive_size`) Min size for scoring.      |
+| `max_spread`         | number | (Legacy/Deprecated? See `max_incentive_spread`) Max spread for scoring.  |
+| `event_start_date`   | string | ISO string when rewards event starts (or `game_start_time` relevant).      |
+| `event_end_date`     | string | ISO string when rewards event ends.                                        |
+| `in_game_multiplier` | number | Multiplier applied to rewards during in-game period (e.g., `b` in formula).|
+| `reward_epoch`       | number | Current reward epoch identifier.                                           |
+
+### Get Sampling Markets
+
+Retrieve a paginated list of markets *currently eligible for liquidity rewards* (full details).
+
+**HTTP Request**
+`GET {clob-endpoint}/sampling-markets?next_cursor={next_cursor}`
+
+**Query Parameters & Response Format:** Same as `Get Markets`. The `data` array will only contain markets where rewards are active.
+
+**Python Client Example**
+
+```python
+# Similar pagination logic as Get Markets
+sampling_markets = client.get_sampling_markets(next_cursor="")
+print(f"Found {len(sampling_markets.get('data',[]))} sampling markets on first page.")
+```
+
+### Get Simplified Markets
+
+Retrieve a paginated list of available CLOB markets with a *reduced schema*. Faster if you only need core details.
+
+**HTTP Request**
+`GET {clob-endpoint}/simplified-markets?next_cursor={next_cursor}`
+
+**Query Parameters & Response Format:** Same pagination as `Get Markets`, but the `data` array contains `SimplifiedMarket` objects.
+
+**SimplifiedMarket Object Structure**
+
+| Name                   | Type     | Description                                                                      |
+| :--------------------- | :------- | :------------------------------------------------------------------------------- |
+| `condition_id`         | string   | Unique market identifier.                                                        |
+| `tokens`               | Token[2] | Array of 2 Token objects (YES/NO).                                               |
+| `rewards`              | Rewards  | Rewards configuration.                                                           |
+| `min_incentive_size`   | string   | Minimum resting order size (shares) for rewards.                                 |
+| `max_incentive_spread` | string   | Maximum spread (cents) from midpoint for rewards.                                |
+| `active`               | boolean  | `true` if market is active for trading.                                          |
+| `closed`               | boolean  | `true` if market is closed.                                                      |
+
+**Python Client Example**
+
+```python
+# Similar pagination logic as Get Markets
+simplified_markets = client.get_simplified_markets(next_cursor="")
+print(f"Found {len(simplified_markets.get('data',[]))} simplified markets on first page.")
+# print(simplified_markets.get('data', [])[0]) # Print first simplified market
+```
+
+### Get Sampling Simplified Markets
+
+Retrieve a paginated list of markets *currently eligible for liquidity rewards* with the *reduced schema*.
+
+**HTTP Request**
+`GET {clob-endpoint}/sampling-simplified-markets?next_cursor={next_cursor}`
+
+**Query Parameters & Response Format:** Same as `Get Simplified Markets`. The `data` array will only contain reward-eligible markets.
+
+**Python Client Example**
+
+```python
+# Similar pagination logic as Get Markets
+sampling_simplified_markets = client.get_sampling_simplified_markets(next_cursor="")
+print(f"Found {len(sampling_simplified_markets.get('data',[]))} sampling simplified markets on first page.")
+```
+
+### Get Market
+
+Retrieve full details for a single CLOB market by its `condition_id`.
+
+**HTTP Request**
+`GET {clob-endpoint}/markets/{condition_id}`
+
+**URL Parameters**
+
+| Parameter      | Required | Type   | Description               |
+| :------------- | :------- | :----- | :------------------------ |
+| `condition_id` | yes      | string | Market identifier.        |
+
+**Python Client Example**
+
+```python
+market_condition_id = "0x..." # Example condition ID
+market_data = client.get_market(condition_id=market_condition_id)
+print(market_data)
+```
+
+**Response Format**
+
+```json
+{
+  // Contains a single Market object (full structure)
+  "condition_id": "...",
+  "question_id": "...",
+  "tokens": [...],
+  // ... other Market fields
+}
+```
+*(Note: The original doc implies a wrapper `{"market": Market}` object, but client examples often return the Market object directly. Check actual API response.)*
+
+---
+
+## CLOB Prices and Books
+
+Endpoints for retrieving order book and price information.
+
+### Get Book
+
+Get the current order book summary (aggregated price levels) for a specific outcome token.
+
+**HTTP Request**
+`GET {clob-endpoint}/book?token_id={token_id}`
+
+**Query Parameters**
+
+| Parameter | Required | Type   | Description                            |
+| :-------- | :------- | :----- | :------------------------------------- |
+| `token_id`| yes      | string | ERC1155 ID of the outcome token (asset ID). |
+
+**Python Client Example**
+
+```python
+token_id = "71321045679252212594626385532706912750332728571942532289631379312455583992563" # Example YES token
+order_book = client.get_order_book(token_id)
+print(f"Order book for token {token_id}:")
+print(order_book)
+```
+
+**Response Format** (`Orderbook` Object)
+
+| Name      | Type           | Description                                                              |
+| :-------- | :------------- | :----------------------------------------------------------------------- |
+| `market`  | string         | Market identifier (condition ID).                                        |
+| `asset_id`| string         | Token ID (asset ID) this book is for.                                    |
+| `hash`    | string         | Hash digest of the current order book state.                             |
+| `timestamp`| string        | UNIX timestamp (milliseconds) of book generation.                        |
+| `bids`    | OrderSummary[] | List of aggregated bid levels (price, size), highest price first.       |
+| `asks`    | OrderSummary[] | List of aggregated ask levels (price, size), lowest price first.        |
+
+**OrderSummary Object Structure (within Orderbook)**
+
+| Name  | Type   | Description                           |
+| :---- | :----- | :------------------------------------ |
+| `price`| string | Price level.                          |
+| `size` | string | Total size available at this price. |
+
+**Example Response**
+
+```json
+{
+  "market": "0x...",
+  "asset_id": "713...",
+  "hash": "0x...",
+  "timestamp": "1678886400123",
+  "bids": [
+    { "price": "0.50", "size": "1500.5" },
+    { "price": "0.49", "size": "2000.0" }
+  ],
+  "asks": [
+    { "price": "0.51", "size": "1200.0" },
+    { "price": "0.52", "size": "3000.75" }
+  ]
+}
+```
+
+### Get Books
+
+Get order book summaries for multiple outcome tokens simultaneously.
+
+**HTTP Request**
+`POST {clob-endpoint}/books`
+
+**Request Body**
+
+```json
+{
+  "params": [
+    { "token_id": "..." },
+    { "token_id": "..." },
+    ...
+  ]
+}
+```
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import BookParams
+
+token_id_1 = "713..." # Example YES token 1
+token_id_2 = "521..." # Example YES token 2
+
+order_books = client.get_order_books(
+    params=[
+        BookParams(token_id=token_id_1),
+        BookParams(token_id=token_id_2),
+    ]
+)
+print(order_books)
+```
+
+**Response Format**
+
+A list of `Orderbook` objects (same structure as `Get Book` response).
+
+```json
+[
+  { ... Orderbook object for token_id_1 ... },
+  { ... Orderbook object for token_id_2 ... },
+  ...
+]
+```
+
+### Get Price
+
+Get the best available price (best bid for "sell" side query, best ask for "buy" side query) for a specific outcome token.
+
+**HTTP Request**
+`GET {clob-endpoint}/price?token_id={token_id}&side={side}`
+
+**Query Parameters**
+
+| Parameter | Required | Type   | Description                                     |
+| :-------- | :------- | :----- | :---------------------------------------------- |
+| `token_id`| yes      | string | Outcome token ID (asset ID).                    |
+| `side`    | yes      | string | `"buy"` (gets best ask) or `"sell"` (gets best bid). |
+
+**Python Client Example**
+
+```python
+token_id = "713..." # Example YES token
+
+best_ask_price = client.get_price(token_id=token_id, side="buy")
+print(f"Best Ask (Buy Price) for {token_id}: {best_ask_price}")
+
+best_bid_price = client.get_price(token_id=token_id, side="sell")
+print(f"Best Bid (Sell Price) for {token_id}: {best_bid_price}")
+```
+
+**Response Format**
+
+```json
+{
+  "price": "0.51" // Example price string, or null if no orders exist on that side
+}
+```
+*(Client might return the price string directly).*
+
+### Get Prices
+
+Get the best bid and best ask prices for multiple outcome tokens simultaneously.
+
+**HTTP Request**
+`POST {clob-endpoint}/prices`
+
+**Request Body**
+
+```json
+{
+  "params": [
+    { "token_id": "...", "side": "BUY" },
+    { "token_id": "...", "side": "SELL" },
+    { "token_id": "...", "side": "BUY" },
+    { "token_id": "...", "side": "SELL" },
+    ...
+  ]
+}
+```
+*(Note: `side` case might matter, examples use uppercase `BUY`/`SELL`).*
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import PriceParams # Check if BookParams or PriceParams is correct
+
+token_id_1 = "713..."
+token_id_2 = "521..."
+
+prices = client.get_prices(
+    params=[
+        PriceParams(token_id=token_id_1, side="BUY"),
+        PriceParams(token_id=token_id_1, side="SELL"),
+        PriceParams(token_id=token_id_2, side="BUY"),
+        PriceParams(token_id=token_id_2, side="SELL"),
+    ]
+)
+print(prices)
+```
+
+**Response Format**
+
+A dictionary mapping asset IDs to a nested dictionary mapping sides (`"BUY"` -> best ask, `"SELL"` -> best bid) to prices.
+
+```json
+{
+  "52114319501245915516055106046884209969926127482827954674443846427813813222426": {
+    "BUY": "0.49", // Best Ask
+    "SELL": "0.5"  // Best Bid (corrected from original example)
+  },
+  "71321045679252212594626385532706912750332728571942532289631379312455583992563": {
+    "BUY": "0.50", // Best Ask
+    "SELL": "0.51"  // Best Bid (corrected from original example)
+  }
+}
+```
+*(Self-correction: The original response example seemed to flip BUY/SELL definitions. Corrected based on typical market conventions where BUY price is ask and SELL price is bid).*
+
+### Get Midpoint
+
+Get the midpoint price ((best bid + best ask) / 2) for a specific outcome token.
+
+**HTTP Request**
+`GET {clob-endpoint}/midpoint?token_id={token_id}`
+
+**Query Parameters**
+
+| Parameter | Required | Type   | Description           |
+| :-------- | :------- | :----- | :-------------------- |
+| `token_id`| yes      | string | Outcome token ID.     |
+
+**Python Client Example**
+
+```python
+token_id = "713..."
+midpoint = client.get_midpoint(token_id)
+print(f"Midpoint for {token_id}: {midpoint}")
+```
+
+**Response Format**
+
+```json
+{
+  "mid": "0.505" // Example midpoint price string, or null if bid or ask is missing
+}
+```
+*(Client might return the price string directly).*
+
+### Get Midpoints
+
+Get the midpoint prices for multiple outcome tokens simultaneously.
+
+**HTTP Request**
+`POST {clob-endpoint}/midpoints`
+
+**Request Body**
+
+```json
+{
+  "params": [
+    { "token_id": "..." },
+    { "token_id": "..." },
+    ...
+  ]
+}
+```
+*(Uses `BookParams` structure without the side)*.
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import BookParams # Reusing BookParams type
+
+token_id_1 = "713..."
+token_id_2 = "521..."
+
+midpoints = client.get_midpoints(
+    params=[
+        BookParams(token_id=token_id_1),
+        BookParams(token_id=token_id_2),
+    ]
+)
+print(midpoints)
+```
+
+**Response Format**
+
+A dictionary mapping asset IDs to their midpoint price string.
+
+```json
+{
+  "521...": "0.495",
+  "713...": "0.505"
+}
+```
+
+### Get Spread
+
+Get the spread (best ask - best bid) for a specific outcome token.
+
+**HTTP Request**
+`GET {clob-endpoint}/spread?token_id={token_id}`
+
+**Query Parameters**
+
+| Parameter | Required | Type   | Description           |
+| :-------- | :------- | :----- | :-------------------- |
+| `token_id`| yes      | string | Outcome token ID.     |
+
+**Python Client Example**
+
+```python
+token_id = "713..."
+spread = client.get_spread(token_id)
+print(f"Spread for {token_id}: {spread}")
+```
+
+**Response Format**
+
+```json
+{
+  "spread": "0.01" // Example spread string, or null if bid or ask is missing
+}
+```
+*(Client might return the price string directly).*
+
+### Get Spreads
+
+Get the spreads for multiple outcome tokens simultaneously.
+
+**HTTP Request**
+`POST {clob-endpoint}/spreads` *(Note: Original doc incorrectly listed GET)*
+
+**Request Body**
+
+```json
+{
+  "params": [
+    { "token_id": "..." },
+    { "token_id": "..." },
+    ...
+  ]
+}
+```
+*(Uses `BookParams` structure without the side)*.
+
+**Python Client Example**
+
+```python
+from py_clob_client.clob_types import BookParams # Reusing BookParams type
+
+token_id_1 = "713..."
+token_id_2 = "521..."
+
+spreads = client.get_spreads(
+    params=[
+        BookParams(token_id=token_id_1),
+        BookParams(token_id=token_id_2),
+    ]
+)
+print(spreads)
+
+```
+
+**Response Format**
+
+A dictionary mapping asset IDs to their spread string.
+
+```json
+{
+  "521...": "0.01",
+  "713...": "0.01"
+}
+```
+
+---
+
+## CLOB Websocket API
+
+### Overview
+
+Provides real-time updates via WebSocket Secure (WSS) channels. Allows clients to maintain near real-time views of orders, trades, and market data without constant polling.
+
+**Base URL:** `wss://ws-subscriptions-clob.polymarket.com/ws/`
+
+### Subscription Message
+
+Upon connection, send a JSON message to subscribe to channels and authenticate (if necessary).
+
+**Subscription Message Format**
+
+| Field       | Type     | Required?             | Description                                                                  |
+| :---------- | :------- | :-------------------- | :--------------------------------------------------------------------------- |
+| `auth`      | Auth     | For `user` channel only | Authentication credentials (see below). Omit for public `market` channel.      |
+| `markets`   | string[] | For `user` channel    | Array of market **condition IDs** to receive user-specific events for.       |
+| `assets_ids`| string[] | For `market` channel  | Array of outcome **token IDs** (asset IDs) to receive public market data for. |
+| `type`      | string   | yes                   | Channel type: `"User"` or `"Market"`.                                        |
+
+**WSS Authentication (`Auth` object)**
+*(Only required for `type: "User"`)*
+
+| Field      | Optional | Type   | Description                          |
+| :--------- | :------- | :----- | :----------------------------------- |
+| `apiKey`   | no       | string | Polygon account's CLOB API key (L2)  |
+| `secret`   | no       | string | Polygon account's CLOB API secret (L2) |
+| `passphrase`| no      | string | Polygon account's CLOB API passphrase (L2) |
+
+**Example Subscription (User Channel)**
+
+```json
+{
+  "type": "User",
+  "auth": {
+    "apiKey": "...",
+    "secret": "...",
+    "passphrase": "..."
+  },
+  "markets": ["0x...", "0x..."] // Condition IDs
+}
+```
+
+**Example Subscription (Market Channel - L2 Book)**
+
+```json
+{
+  "type": "Market",
+  "assets_ids": ["713...", "521..."] // Token IDs (Asset IDs)
+}
+```
+
+### User Channel (`type: "User"`)
+
+Authenticated channel providing updates specific to the user whose API credentials were provided in the subscription message.
+
+**`trade` Message**
+
+Emitted when:
+*   A market order placed by the user is matched (`status: "MATCHED"` initially).
+*   A resting limit order placed by the user is filled by a taker (`status: "MATCHED"` initially).
+*   The status of a trade involving the user updates (`"MINED"`, `"CONFIRMED"`, `"RETRYING"`, `"FAILED"`).
+
+**Structure (`trade` message)**
+
+| Name             | Type         | Description                                                          |
+| :--------------- | :----------- | :------------------------------------------------------------------- |
+| `event_type`     | string       | Always `"trade"`.                                                    |
+| `id`             | string       | Unique trade identifier.                                             |
+| `market`         | string       | Market identifier (condition ID).                                    |
+| `asset_id`       | string       | Asset ID (token ID) of the *taker's* order.                          |
+| `side`           | string       | `"BUY"` or `"SELL"` (from the taker's perspective).                    |
+| `size`           | string       | Total size filled in this trade part.                                |
+| `price`          | string       | Limit price of the *taker's* order.                                  |
+| `status`         | string       | Current trade status (e.g., `"MATCHED"`, `"CONFIRMED"`).               |
+| `matchtime`      | string       | UNIX timestamp (seconds) when the trade was matched off-chain.       |
+| `timestamp`      | string       | UNIX timestamp (seconds) of this specific event emission.            |
+| `last_update`    | string       | UNIX timestamp (seconds) of the last status update.                  |
+| `outcome`        | string       | Human-readable outcome corresponding to the `asset_id`.              |
+| `owner`          | string       | API key ID (`apiKey`) of the user receiving this message.            |
+| `trade_owner`    | string       | API key ID (`apiKey`) of the *taker*.                                |
+| `taker_order_id` | string       | Hash of the taker's market order.                                    |
+| `maker_orders`   | MakerOrder[] | List of maker order details filled (same structure as REST response). |
+| `type`           | string       | Always `"TRADE"` (distinguishes from order events).                  |
+
+*(Note: Timestamps might be seconds or milliseconds - verify with actual stream).*
+
+**`order` Message**
+
+Emitted when:
+*   An order is placed by the user (`type: "PLACEMENT"`).
+*   An existing order by the user is partially filled (`type: "UPDATE"`).
+*   An order placed by the user is cancelled (`type: "CANCELLATION"`).
+
+**Structure (`order` message)**
+
+| Name              | Type     | Description                                                              |
+| :---------------- | :------- | :----------------------------------------------------------------------- |
+| `event_type`      | string   | Always `"order"`.                                                        |
+| `type`            | string   | Action type: `"PLACEMENT"`, `"UPDATE"`, `"CANCELLATION"`.                |
+| `id`              | string   | Order ID (hash).                                                         |
+| `market`          | string   | Market identifier (condition ID).                                        |
+| `asset_id`        | string   | Token ID (asset ID) of the order.                                        |
+| `price`           | string   | Order price.                                                             |
+| `side`            | string   | `"BUY"` or `"SELL"`.                                                     |
+| `original_size`   | string   | Initial order size.                                                      |
+| `size_matched`    | string   | Cumulative size matched/filled so far.                                   |
+| `outcome`         | string   | Human-readable outcome.                                                  |
+| `owner`           | string   | API key ID (`apiKey`) of the user receiving this message.                |
+| `order_owner`     | string   | API key ID (`apiKey`) of the user who placed the order (same as `owner`). |
+| `timestamp`       | string   | UNIX timestamp (seconds) of this event.                                  |
+| `associate_trades`| string[] | List of Trade IDs involving this order (relevant on `UPDATE`). Null/empty otherwise. |
+
+### Market Channel (`type: "Market"`)
+
+Public, unauthenticated channel providing market data updates for subscribed assets.
+
+**`book` Message (Level 2 Snapshot)**
+
+Emitted when:
+*   Initially upon subscribing to an `asset_id`.
+*   Periodically, or after significant changes, providing a full snapshot of the aggregated order book.
+
+**Structure (`book` message)**
+
+| Name       | Type           | Description                                                        |
+| :--------- | :------------- | :----------------------------------------------------------------- |
+| `event_type`| string         | Always `"book"`.                                                   |
+| `market`   | string         | Market identifier (condition ID).                                  |
+| `asset_id` | string         | Token ID (asset ID) this book snapshot is for.                   |
+| `timestamp`| string         | UNIX timestamp (milliseconds) of book generation.                |
+| `hash`     | string         | Hash digest of this order book state. Can be used to detect changes. |
+| `buys`     | OrderSummary[] | List of aggregated bid levels (price, size), highest price first. |
+| `sells`    | OrderSummary[] | List of aggregated ask levels (price, size), lowest price first.  |
+
+*(`OrderSummary` has `price` and `size` fields, same as REST response).*
+
+**`price_change` Message (Level 2 Delta)**
+
+Emitted when:
+*   A new limit order is placed affecting a price level.
+*   A limit order is cancelled or fully filled, affecting a price level.
+*   Provides incremental updates to the order book state. Clients typically use these deltas to update their local representation of the book, potentially verifying against the `hash` from periodic `book` snapshots.
+
+**Structure (`price_change` message)**
+
+| Name       | Type     | Description                                                              |
+| :--------- | :------- | :----------------------------------------------------------------------- |
+| `event_type`| string   | Always `"price_change"`.                                                 |
+| `market`   | string   | Market identifier (condition ID).                                        |
+| `asset_id` | string   | Token ID (asset ID) affected.                                            |
+| `timestamp`| string   | UNIX timestamp (milliseconds) of the event causing the change.           |
+| `hash`     | string   | Hash digest of the *new* order book state *after* this change.           |
+| `changes`  | Change[] | Array of price level changes (see below).                                |
+
+**Change Object Structure (within `price_change`)**
+
+| Name  | Type   | Description                                                       |
+| :---- | :----- | :---------------------------------------------------------------- |
+| `price`| string | The price level that changed.                                     |
+| `side` | string | `"BUY"` (bid level) or `"SELL"` (ask level).                        |
+| `size` | string | The *new* total aggregated size available at this price level. (Use "0" if level is removed). |
+
+**`tick_size_change` Message**
+
+Emitted when:
+*   The market's minimum tick size changes, usually when the price nears 0 or 1 (e.g., > 0.96 or < 0.04), requiring finer granularity.
+
+**Structure (`tick_size_change` message)**
+
+| Name            | Type   | Description                       |
+| :-------------- | :----- | :-------------------------------- |
+| `event_type`    | string | Always `"tick_size_change"`.    |
+| `market`        | string | Market identifier (condition ID). |
+| `asset_id`      | string | Token ID (asset ID) affected.     |
+| `old_tick_size` | string | Previous minimum tick size.     |
+| `new_tick_size` | string | New minimum tick size.          |
+| `timestamp`     | string | UNIX timestamp (milliseconds) of the change. |
+
+---
+
+## CLOB Timeseries Data
+
+Provides historical price data for specific outcome tokens.
+
+**HTTP Request**
+`GET {clob-endpoint}/prices-history`
+
+**Query Parameters**
+
+| Name      | Type   | Description                                                                    |
+| :-------- | :----- | :----------------------------------------------------------------------------- |
+| `market`  | number | The CLOB **token ID** (asset ID) for which to fetch price history. *(Name 'market' seems misleading here)* |
+| `startTs` | number | Start time (UNIX timestamp, seconds, UTC). Mutually exclusive with `interval`. |
+| `endTs`   | number | End time (UNIX timestamp, seconds, UTC). Mutually exclusive with `interval`.   |
+| `interval`| string | Duration ending now (e.g., "1m", "1w", "1d", "6h", "1h", "max"). Mutually exclusive with `startTs`/`endTs`. |
+| `fidelity`| number | Resolution of data in minutes (e.g., 1, 5, 15, 60).                            |
+
+**Example Request**
+`GET https://clob.polymarket.com/prices-history?market=713...&interval=1d&fidelity=5`
+
+**Response Format**
+
+```json
+{
+  "history": [
+    { ... TimeseriesPoint object ... },
+    { ... TimeseriesPoint object ... },
+    ...
+  ]
+}
+```
+
+**TimeseriesPoint Object Structure**
+
+| Name | Type   | Description                          |
+| :--- | :----- | :----------------------------------- |
+| `t`  | number | UTC timestamp (likely seconds).      |
+| `p`  | number | Price at that timestamp.             |
+
+---
+
+## Gamma Markets API
+
+### Overview
+
+Gamma is a hosted service by Polymarket that indexes market data (including metadata not readily available on-chain) and makes it available via a read-only REST API. It's useful for market discovery, categorization, volume tracking, and obtaining information needed for resolution.
+
+**Endpoint:** `{gamma-endpoint}` -> `https://gamma-api.polymarket.com`
+
+### Market Organization
+
+Gamma uses two main organizational models:
+
+1.  **Market:** Represents a single tradable question/outcome pair (e.g., "Will YES win?"). Corresponds to a condition ID, question ID, market maker address, and a pair of CLOB token IDs. A market might be part of a larger Event.
+2.  **Event:** A collection of related Markets.
+    *   Can contain just one Market (Standard Market Prediction - SMP).
+    *   Can contain two or more Markets (Grouped Market Prediction - GMP, e.g., "Who will win the election?" with markets for each candidate and "Other").
+
+### Gamma API - Markets
+
+#### Get Markets
+
+Retrieve a list of markets with filtering and pagination. Markets are tradable on the CLOB if `enableOrderBook` is true in the response object (field not explicitly listed but implied).
+
+**HTTP Request**
+`GET {gamma-endpoint}/markets`
+
+**Query Parameters (Examples)**
+
+| Parameter         | Type    | Description                                                              | Example Usage                                |
+| :---------------- | :------ | :----------------------------------------------------------------------- | :------------------------------------------- |
+| `limit`           | number  | Max results per page (default varies).                                   | `?limit=50`                                  |
+| `offset`          | number  | Number of results to skip (for pagination).                              | `?offset=100`                                |
+| `order`           | string  | Field to sort by (e.g., `slug`, `volume_num`, `end_date`).               | `?order=volume_num`                          |
+| `ascending`       | boolean | Sort direction (`true` for asc, `false` for desc). Requires `order`.     | `?order=volume_num&ascending=false`          |
+| `id`              | number  | Filter by specific market ID(s). Repeat for multiple.                    | `?id=123&id=456`                             |
+| `slug`            | string  | Filter by market slug(s). Repeat for multiple.                           | `?slug=market-a&slug=market-b`               |
+| `archived`        | boolean | Filter by archived status (`true`/`false`).                              | `?archived=false`                            |
+| `active`          | boolean | Filter by active trading status (`true`/`false`).                        | `?active=true`                               |
+| `closed`          | boolean | Filter by closed/resolved status (`true`/`false`).                       | `?closed=false`                              |
+| `clob_token_ids`  | string  | Filter by CLOB token ID(s). Repeat for multiple.                         | `?clob_token_ids=713...&clob_token_ids=512...` |
+| `condition_ids`   | string  | Filter by condition ID(s). Repeat for multiple.                          | `?condition_ids=0x...&condition_ids=0x...`   |
+| `liquidity_num_min`| decimal | Filter by minimum current liquidity (in collateral).                     | `?liquidity_num_min=10000.0`                 |
+| `liquidity_num_max`| decimal | Filter by maximum current liquidity.                                     | `?liquidity_num_max=50000.0`                 |
+| `volume_num_min`  | decimal | Filter by minimum total volume (in collateral).                          | `?volume_num_min=5000.0`                     |
+| `volume_num_max`  | decimal | Filter by maximum total volume.                                          | `?volume_num_max=100000.0`                   |
+| `start_date_min`  | string  | Filter by minimum start date (ISO 8601 format: `YYYY-MM-DDTHH:MM:SSZ`). | `?start_date_min=2023-01-01T00:00:00Z`      |
+| `start_date_max`  | string  | Filter by maximum start date (ISO 8601).                                 | `?start_date_max=2023-06-30T23:59:59Z`      |
+| `end_date_min`    | string  | Filter by minimum end/resolution date (ISO 8601).                        | `?end_date_min=2024-01-01T00:00:00Z`      |
+| `end_date_max`    | string  | Filter by maximum end/resolution date (ISO 8601).                        | `?end_date_max=2024-12-31T23:59:59Z`      |
+| `tag_id`          | number  | Filter by a specific tag ID.                                             | `?tag_id=5`                                  |
+| `related_tags`    | boolean | Include markets with related tags (requires `tag_id`).                   | `?tag_id=5&related_tags=true`                |
+
+**Response Format**
+
+```json
+{
+  "markets": [
+    { ... Gamma Market Object ... },
+    { ... Gamma Market Object ... },
+    ...
+  ]
+}
+```
+*(The Gamma Market Object structure is not fully defined in the source text but includes fields used in filters like `id`, `slug`, `liquidity_num`, `volume_num`, `start_date`, `end_date`, `condition_id`, `clob_token_ids`, `active`, `closed`, `archived`, etc., plus potentially `question`, `description`, `tags`, `enableOrderBook`.)*
+
+#### Get Single Market
+
+Retrieve details for a single market by its Gamma internal ID.
+
+**HTTP Request**
+`GET {gamma-endpoint}/markets/{id}`
+
+**URL Parameters**
+
+| Parameter | Required | Type   | Description        |
+| :-------- | :------- | :----- | :----------------- |
+| `id`      | yes      | number | Gamma Market ID. |
+
+**Example Request**
+`GET https://gamma-api.polymarket.com/markets/501011`
+
+**Response Format**
+A single Gamma Market Object.
+
+### Gamma API - Events
+
+#### Get Events
+
+Retrieve a list of events (collections of markets) with filtering and pagination.
+
+**HTTP Request**
+`GET {gamma-endpoint}/events`
+
+**Query Parameters (Examples)**
+*(Similar to `/markets` but filtering on event properties)*
+
+| Parameter     | Type    | Description                                                              | Example Usage                          |
+| :------------ | :------ | :----------------------------------------------------------------------- | :------------------------------------- |
+| `limit`       | number  | Max results per page.                                                    | `?limit=20`                            |
+| `offset`      | number  | Pagination offset.                                                       | `?offset=40`                           |
+| `order`       | string  | Field to sort by (e.g., `slug`, `volume`, `end_date`).                   | `?order=volume`                        |
+| `ascending`   | boolean | Sort direction (`true`/`false`). Requires `order`.                       | `?order=volume&ascending=false`        |
+| `id`          | number  | Filter by specific event ID(s). Repeat for multiple.                     | `?id=901&id=902`                       |
+| `slug`        | string  | Filter by event slug(s). Repeat for multiple.                            | `?slug=event-a&slug=event-b`           |
+| `archived`    | boolean | Filter by archived status.                                               | `?archived=false`                      |
+| `active`      | boolean | Filter if *any* market within the event is active.                       | `?active=true`                         |
+| `closed`      | boolean | Filter if *all* markets within the event are closed.                     | `?closed=true`                         |
+| `liquidity_min`| decimal | Filter by minimum total liquidity across all markets in the event.       | `?liquidity_min=50000.0`               |
+| `liquidity_max`| decimal | Filter by maximum total liquidity.                                       | `?liquidity_max=200000.0`              |
+| `volume_min`  | decimal | Filter by minimum total volume across all markets in the event.          | `?volume_min=10000.0`                  |
+| `volume_max`  | decimal | Filter by maximum total volume.                                          | `?volume_max=500000.0`                 |
+| `start_date_min`| string | Filter by earliest start date of any market in the event (ISO 8601).     | `?start_date_min=2023-01-01T00:00:00Z` |
+| `start_date_max`| string | Filter by latest start date (ISO 8601).                                  | `?start_date_max=2023-12-31T23:59:59Z` |
+| `end_date_min`| string | Filter by earliest end date of any market in the event (ISO 8601).       | `?end_date_min=2024-01-01T00:00:00Z` |
+| `end_date_max`| string | Filter by latest end date (ISO 8601).                                    | `?end_date_max=2024-12-31T23:59:59Z` |
+| `tag`         | string  | Filter by tag label (e.g., "sports"). Mutually exclusive priority 1.     | `?tag=crypto`                          |
+| `tag_id`      | number  | Filter by tag ID. Mutually exclusive priority 2.                         | `?tag_id=10`                           |
+| `related_tags`| boolean | Include events with related tags (requires `tag_id` or `tag_slug`).        | `?tag_id=10&related_tags=true`         |
+| `tag_slug`    | string  | Filter by tag slug (e.g., "us-politics"). Mutually exclusive priority 3. | `?tag_slug=entertainment`              |
+
+**Response Format**
+
+```json
+{
+  "events": [
+    { ... Gamma Event Object ... },
+    { ... Gamma Event Object ... },
+    ...
+  ]
+}
+```
+*(The Gamma Event Object structure includes fields like `id`, `slug`, `title`, `description`, `tags`, `markets` (potentially a list of associated market IDs or simplified market objects), `active`, `closed`, `archived`, aggregated `volume`, `liquidity`, `start_date`, `end_date`, `negRisk`, `negRiskAugmented`.)*
+
+#### Get Single Event
+
+Retrieve details for a single event by its Gamma internal ID.
+
+**HTTP Request**
+`GET {gamma-endpoint}/events/{id}`
+
+**URL Parameters**
+
+| Parameter | Required | Type   | Description      |
+| :-------- | :------- | :----- | :--------------- |
+| `id`      | yes      | number | Gamma Event ID. |
+
+**Example Request**
+`GET https://gamma-api.polymarket.com/events/901289`
+
+**Response Format**
+A single Gamma Event Object.
+
+---
+
+## Subgraph
+
+### Overview
+
+Polymarket provides open-source subgraphs (using The Graph protocol) that index on-chain data from Polymarket contracts (Exchange, CTF, FPMMs, etc.) and make it queryable via GraphQL. These provide useful aggregated data like user positions, trade history, volume, liquidity metrics, PNL, and open interest, updated in near real-time with blockchain events (and handling reorgs). The main Polymarket.com interface uses these subgraphs extensively.
+
+### Source Code
+
+The subgraph code is open-source on GitHub:
+[Polymarket/polymarket-subgraph](https://github.com/Polymarket/polymarket-subgraph)
+
+The available data models and queryable fields (schemas) can be found in the `schema.graphql` files within the repository for each specific subgraph.
+
+### Hosted Versions (Goldsky)
+
+Publicly accessible hosted versions of the subgraphs are available via Goldsky, each with a GraphQL playground for exploring the schema and making queries:
+
+*   **Orders Subgraph:** Indexes CLOB order data (may be less critical if using CLOB API directly).
+    *   URL: `https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/orderbook-subgraph/prod/gn`
+*   **Positions Subgraph:** Tracks user token balances (conditional tokens, USDC) and market positions derived from on-chain events.
+    *   URL: `https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/positions-subgraph/0.0.7/gn`
+*   **Activity Subgraph:** Indexes historical events like trades, merges, splits, redemptions.
+    *   URL: `https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/activity-subgraph/0.0.4/gn`
+*   **Open Interest (OI) Subgraph:** Calculates and tracks open interest per market.
+    *   URL: `https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/oi-subgraph/0.0.6/gn`
+*   **Profit and Loss (PNL) Subgraph:** Calculates user PNL based on trades and current market prices.
+    *   URL: `https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/pnl-subgraph/0.0.14/gn`
+
+*(Note: Subgraph versions might update; check the Goldsky links for the latest production versions.)*
+
+---
+
+## Resolution
+
+### Overview
+
+Market resolution (determining the winning outcome) is decentralized. Polymarket primarily uses UMA's Optimistic Oracle, with some price-based markets potentially using Pyth Network in the future.
+
+### UMA Optimistic Oracle (OO)
+
+**Overview**
+
+Polymarket uses UMA's OO for resolving arbitrary, subjective questions permissionlessly. The OO works as an escalation game:
+1.  A question is requested on the OO via an adapter contract.
+2.  Anyone can propose an answer (price/outcome) by posting a bond. A "liveness period" starts.
+3.  If no one disputes the proposal within the liveness period, it becomes final.
+4.  If disputed (by someone posting a counter-bond), the question escalates to UMA's Data Verification Mechanism (DVM).
+5.  UMA token holders vote via the DVM to determine the correct outcome over several days.
+
+Polymarket uses a custom adapter contract, `UmaCtfAdapter`, to link the OO's resolution process with the Gnosis Conditional Tokens Framework (CTF) used for Polymarket shares.
+
+**Clarifications via Bulletin Board**
+
+Adapter versions v2+ include a "bulletin board" feature (`0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74` on Polygon). Market creators can post clarifications to the question's ancillary data *after* creation.
+*   Questions allowing updates include specific text in their ancillary data referencing the bulletin board and a transaction explaining its use (e.g., [Polygonscan TX](https://polygonscan.com/tx/0xa14f01b115c4913624fc3f508f960f4dea252758e73c28f5f07f8e19d7bca066)).
+*   **Rule:** Only clarifications that *do not change the fundamental intent* of the original question should be considered during resolution. This is primarily used for Augmented Negative Risk markets (see below).
+
+**Resolution Process Flow**
+
+The `UmaCtfAdapter` requires a *second* dispute to escalate a question to the UMA DVM. This increases the cost/effort for potential griefing attacks and allows recovery from simple "fat-finger" proposal errors.
+
+1.  **Initialize:** Market creator calls `initialize()` on `UmaCtfAdapter`.
+    *   Inputs: `ancillaryData` (question text, sources), `rewardToken` (USDC), `reward` (for proposer), `proposalBond`, `liveness`.
+    *   Action: Stores parameters, prepares the condition on CTF, requests price from OO. Returns `questionId`.
+2.  **Propose Price (Round 1):** Anyone proposes an outcome on the OO, posting the bond. Liveness period starts.
+3.  **Dispute (Round 1):** If disputed, the adapter receives a callback, resets the question ID state, returns the reward, and requests a *new* price from the OO for the *same original question*. The first proposal is effectively nullified.
+4.  **Propose Price (Round 2):** A second proposal is needed on the OO for the same question ID, posting a bond again. Liveness restarts.
+5.  **Dispute (Round 2):** If this second proposal is disputed, *now* the question escalates to the UMA DVM for voting.
+6.  **Resolve:** If a proposal (either Round 1 or Round 2) is *not* disputed within its liveness period, or after the DVM vote resolves a Round 2 dispute, the adapter receives the final outcome and calls `reportPayouts` on the CTF contract.
+
+**Possible Flows Summary:**
+*   Initialize -> Propose 1 -> (No Dispute) -> Resolve
+*   Initialize -> Propose 1 -> Dispute 1 -> Propose 2 -> (No Dispute) -> Resolve
+*   Initialize -> Propose 1 -> Dispute 1 -> Propose 2 -> Dispute 2 (-> DVM Vote) -> Resolve
+
+**Deployed `UmaCtfAdapter` Addresses**
+
+*   **v3.0.0:**
+    *   Polygon Mainnet: `0x71392E133063CC0D16F40E1F9B60227404Bc03f7`
+    *   Mumbai: `0x71392E133063CC0D16F40E1F9B60227404Bc03f7`
+*   **v2.0.0 (with Bulletin Board):**
+    *   Polygon Mainnet: `0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74`
+    *   Mumbai: `0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74`
+*   **v1.0.0:**
+    *   Polygon Mainnet: `0xCB1822859cEF82Cd2Eb4E6276C7916e692995130`
+    *   Mumbai: `0xCB1822859cEF82Cd2Eb4E6276C7916e692995130`
+
+**Additional UMA Resources**
+*   [UMA Adapter Audit (likely part of a larger Polymarket audit)](Link needed)
+*   [UmaCtfAdapter Source Code (GitHub Link needed)](Link needed)
+*   [UMA Documentation](https://docs.uma.xyz/)
+*   [UMA Oracle dApp (for proposals/disputes)](https://oracle.uma.xyz/)
+
+### Pyth Network
+
+*(Coming soon - likely for markets resolving based on real-time asset prices).*
+
+---
+
+## Rewards
+
+Polymarket offers incentive programs to encourage liquidity and trading activity.
+
+### Liquidity Rewards Program
+
+**Overview**
+
+Market makers (users providing resting limit orders) automatically participate. The program aims to:
+*   Incentivize liquidity across many markets.
+*   Encourage liquidity provision throughout a market's lifecycle.
+*   Reward tight, balanced, two-sided quoting near the midpoint.
+*   Boost trading activity.
+*   Discourage wash trading or purely exploitative strategies.
+
+The methodology is heavily inspired by dYdX's liquidity mining program, adapted for binary markets. Rewards are distributed automatically (likely daily at midnight UTC) to maker addresses.
+
+**Methodology**
+
+Rewards are calculated per market, per epoch (e.g., daily). A maker's share of a market's reward pool depends on their relative score (`Qfinal`) within that market during the epoch. Scoring happens via minute-by-minute sampling of the order book.
+
+**Key Variables:**
+
+| Variable  | Description                                                                      |
+| :-------- | :------------------------------------------------------------------------------- |
+| `S`       | Scoring function for a single order based on spread.                             |
+| `v`       | Max qualifying spread from adjusted midpoint (cents, e.g., 0.03 for 3c).         |
+| `s`       | Actual spread of an order from the *size-adjusted* midpoint (cents).             |
+| `b`       | In-game multiplier (e.g., 1.0 normally, >1.0 during specified game times).     |
+| `m`       | The primary market outcome (e.g., YES token).                                    |
+| `m'`      | The complementary market outcome (e.g., NO token).                                |
+| `n`       | Index representing a specific trader/maker.                                      |
+| `u`       | Index representing a specific minute-sample within the epoch.                    |
+| `c`       | Scaling factor for single-sided liquidity (currently 3.0).                       |
+| `Qone`, `Qtwo`| Intermediate scores representing liquidity on each "side" of the unified book. |
+| `Spreadmn`| Spread `s` for order `n` in market `m`.                                          |
+| `BidSize`, `AskSize` | Size (in shares) of an order.                                         |
+| `Qmin`    | Score for a trader in a single sample, rewarding two-sided liquidity.            |
+| `Qnormal` | Normalized `Qmin` score for a trader relative to all traders in that sample.     |
+| `Qepoch`  | Sum of a trader's `Qnormal` scores across all samples in the epoch.              |
+| `Qfinal`  | Normalized `Qepoch` score relative to all traders for the entire epoch.          |
+
+**Scoring Equations:**
+
+1.  **Order Score (`S`):** Rewards orders closer to the midpoint quadratically.
+    `S(v, s) = ((v - s) / v)^2 * b`
+    *(Score is 0 if `s >= v`)*
+
+2.  **Unified Book Side 1 Score (`Qone`):** Sum of scores for bids on `m` and asks on `m'`.
+    `Qone = Σ [ S(v, Spread_bid_m_i) * BidSize_m_i ] + Σ [ S(v, Spread_ask_m'_j) * AskSize_m'_j ]`
+    *(Sum over all qualifying bids `i` on market `m` and asks `j` on market `m'` for trader `n`)*
+
+3.  **Unified Book Side 2 Score (`Qtwo`):** Sum of scores for asks on `m` and bids on `m'`.
+    `Qtwo = Σ [ S(v, Spread_ask_m_k) * AskSize_m_k ] + Σ [ S(v, Spread_bid_m'_l) * BidSize_m'_l ]`
+    *(Sum over all qualifying asks `k` on market `m` and bids `l` on market `m'` for trader `n`)*
+
+4.  **Sample Score (`Qmin`):** Rewards balanced liquidity.
+    *   **If Midpoint is between 0.10 and 0.90:** Allows single-sided liquidity to score, but less than balanced.
+        `Qmin = max( min(Qone, Qtwo), max(Qone / c, Qtwo / c) )`
+    *   **If Midpoint is < 0.10 or > 0.90:** Requires two-sided liquidity to score.
+        `Qmin = min(Qone, Qtwo)`
+
+5.  **Normalized Sample Score (`Qnormal`):** Trader's score relative to total score in that sample.
+    `Qnormal_n = Qmin_n / Σ (Qmin_i)` (Sum over all traders `i` in sample `u`)
+
+6.  **Epoch Score (`Qepoch`):** Sum of normalized scores over all samples in the epoch (e.g., 1440 samples/day).
+    `Qepoch_n = Σ (Qnormal_n_u)` (Sum over all samples `u`)
+
+7.  **Final Reward Share (`Qfinal`):** Trader's epoch score relative to total epoch score for the market.
+    `Qfinal_n = Qepoch_n / Σ (Qepoch_i)` (Sum over all traders `i` in epoch)
+
+*Trader `n`'s reward for market `m` = `Qfinal_n * TotalRewardPool_m`*
+
+***Size-Adjusted Midpoint:** The midpoint used for calculating spread `s` is not simply `(best_bid + best_ask) / 2`. It's adjusted based on the `min_incentive_size` market parameter. It's calculated as `(best_bid_adj + best_ask_adj) / 2`, where:
+*   `best_bid_adj` is the highest bid price level where cumulative bid size (at that price or better) >= `min_incentive_size`.
+*   `best_ask_adj` is the lowest ask price level where cumulative ask size (at that price or better) >= `min_incentive_size`.
+
+**Market Reward Configurations**
+
+The parameters `min_incentive_size` and `max_incentive_spread` (used for `v`) can be fetched for each market via the CLOB API (`/markets`) or Gamma API (`/markets`). Reward pool allocations per market per epoch might be available via Gamma API or other announcements.
+
+### Leaderboard Competitions
+
+*(Coming soon - likely time-limited competitions based on PNL or trading volume).*
+
+---
+
+## Conditional Tokens Framework (CTF)
+
+### Overview
+
+Polymarket outcome shares ("YES", "NO") are tokenized as ERC1155 tokens on the Polygon network using Gnosis's Conditional Tokens Framework (CTF).
+*   Each market corresponds to a **condition** (identified by a `conditionId`).
+*   A condition has multiple potential **outcomes** (always 2 for Polymarket binary markets).
+*   Each outcome within a condition is represented by a unique ERC1155 token ID, called a **positionId**.
+*   All positions for a given condition are backed by a common **collateral** token (USDC on Polygon).
+*   A full set of outcome tokens for a condition (1 YES + 1 NO) represents a claim on exactly 1 unit of collateral upon resolution.
+
+**Calculating IDs:**
+
+1.  **`conditionId`**: Derived from the oracle, question details, and number of outcomes.
+    *   `getConditionId(oracle, questionId, outcomeSlotCount)`
+    *   `oracle`: Address of the resolving contract (e.g., `UmaCtfAdapter`).
+    *   `questionId`: `bytes32` hash unique to the market question (e.g., hash of UMA ancillary data).
+    *   `outcomeSlotCount`: Always `2` for Polymarket binary markets.
+
+2.  **`collectionId`**: Represents a specific subset of outcomes for a condition.
+    *   `getCollectionId(parentCollectionId, conditionId, indexSet)`
+    *   `parentCollectionId`: Always `bytes32(0)` for Polymarket top-level markets.
+    *   `conditionId`: From step 1.
+    *   `indexSet`: A bitmask identifying the outcomes in the collection.
+        *   For YES token (outcome 0): `indexSet = 1` (binary `01`)
+        *   For NO token (outcome 1): `indexSet = 2` (binary `10`)
+
+3.  **`positionId` (ERC1155 Token ID)**: The final token ID representing a specific outcome, backed by specific collateral.
+    *   `getPositionId(collateralToken, collectionId)`
+    *   `collateralToken`: Address of the collateral (USDC: `0x...` on Polygon).
+    *   `collectionId`: From step 2 (one for YES, one for NO).
+
+*(See Gist linked below for implementation details).*
+
+The CTF contract enables key interactions:
+
+### Split Position
+
+Allows users to deposit collateral (USDC) and receive a full set of outcome tokens (1 YES + 1 NO) for a given market condition. This creates new supply.
+
+**Function:** `splitPosition(collateralToken, parentCollectionId, conditionId, partition, amount)` on the CTF contract.
+*   `collateralToken`: USDC address.
+*   `parentCollectionId`: `bytes32(0)`.
+*   `conditionId`: The market's condition ID.
+*   `partition`: `[1, 2]` (representing the two outcomes).
+*   `amount`: Amount of USDC to deposit (will receive `amount` of YES and `amount` of NO tokens).
+*   Requires `prepareCondition` to have been called (usually done at market creation).
+*   Requires user to have approved the CTF contract to spend `amount` USDC.
+
+### Merge Positions
+
+Allows users to burn a full set of outcome tokens (1 YES + 1 NO) and receive 1 unit of collateral (USDC) back. This removes supply.
+
+**Function:** `mergePositions(collateralToken, parentCollectionId, conditionId, partition, amount)` on the CTF contract.
+*   Parameters are the same as `splitPosition`.
+*   `amount`: Number of full sets (1 YES + 1 NO) to burn. User receives `amount` USDC.
+*   Requires user to hold `amount` of both YES and NO tokens and approve the CTF contract to burn them (via `setApprovalForAll`).
+
+### Redeem Positions
+
+After a market has resolved and the outcome reported to the CTF contract (via `reportPayouts`), holders of the *winning* outcome token can burn their tokens to claim the underlying collateral (1 USDC per winning share). Losing shares become worthless.
+
+**Function:** `redeemPositions(collateralToken, parentCollectionId, conditionId, indexSets, user)` on the CTF contract (parameters might vary slightly based on contract version/wrapper usage).
+*   `collateralToken`: USDC address.
+*   `parentCollectionId`: `bytes32(0)`.
+*   `conditionId`: The market's condition ID.
+*   `indexSets`: `[1, 2]` (specifies which tokens to attempt redemption for - the contract only redeems the winning one).
+*   `user`: Address performing the redemption.
+*   Requires user approval for the CTF contract to burn their winning tokens.
+
+### CTF Contract Deployment
+
+*   **Polygon Mainnet:** `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`
+*   **Mumbai:** `0x7D8610E9567d2a6C9FBf66a5A13E9Ba8bb120d43`
+
+### CTF Resources
+
+*   **Source Code:** [Gnosis/conditional-tokens-contracts](https://github.com/gnosis/conditional-tokens-contracts)
+*   **Audits:** [Link on Gnosis repo/website](Link needed)
+*   **Technical Documentation:** [Gnosis CTF Docs](https://docs.gnosis.io/conditionaltokens/)
+*   **Gist For positionId Calculation:** [Link needed, potentially Polymarket internal or community resource]
+
+---
+
+## FPMMs (Fixed Product Market Makers)
+
+### Overview
+
+In addition to the CLOB, each Polymarket market typically has an associated automated market maker (AMM) deployed, specifically a Fixed Product Market Maker (FPMM). These provide an alternative trading mechanism, especially for smaller trades or when CLOB liquidity is thin.
+*   Deployed via a factory contract; each market has a unique FPMM address (findable via Gamma API or Subgraph).
+*   Maintains a constant product invariant: `balance_YES * balance_NO = constant` (within the pool).
+*   Price is determined by the ratio of tokens in the pool, adjusted by a trading fee.
+*   Anyone can add liquidity (collateral) and receive LP (Liquidity Provider) tokens representing their share of the pool and earned fees.
+*   Trading against the pool involves swapping collateral for one outcome token (buy) or one outcome token for collateral (sell), with the contract handling the necessary splits/merges with the CTF internally.
+*   Implementation based on Gnosis's design.
+
+### Add Liquidity
+
+Provide collateral (USDC) to the FPMM pool.
+
+**Function:** `addFunding(addedFunds, distributionHint)` on the specific FPMM contract.
+*   `addedFunds`: Amount of USDC to add.
+*   `distributionHint`: Only used by the *first* liquidity provider to set the initial price (e.g., `[1, 1]` for 50/50). Ignored otherwise.
+*   Returns LP tokens to the provider.
+*   Requires USDC approval for the FPMM contract.
+*   **Warning:** This function is potentially vulnerable to front-running if called directly. Use via a trusted interface or contract wrapper that mitigates this.
+
+### Remove Liquidity
+
+Burn LP tokens to withdraw underlying assets (outcome tokens + accrued fees in collateral).
+
+**Function:** `removeFunding(sharesToBurn)` on the specific FPMM contract.
+*   `sharesToBurn`: Amount of LP tokens to burn.
+*   Returns the corresponding share of YES tokens, NO tokens, and collected fees (USDC) to the provider.
+*   Requires LP token approval for the FPMM contract.
+
+### Buy Outcome Tokens
+
+Trade collateral (USDC) for a specific outcome token from the pool.
+
+**Function:** `buy(investmentAmount, outcomeIndex, minOutcomeTokensToBuy)` on the FPMM contract.
+*   `investmentAmount`: Amount of USDC to spend.
+*   `outcomeIndex`: Index of the token to buy (e.g., 0 for YES, 1 for NO).
+*   `minOutcomeTokensToBuy`: Minimum amount of the outcome token expected (slippage protection). Transaction reverts if less is received.
+*   Requires USDC approval for the FPMM contract.
+
+### Sell Outcome Tokens
+
+Trade a specific outcome token back to the pool for collateral (USDC).
+
+**Function:** `sell(returnAmount, outcomeIndex, maxOutcomeTokensToSell)` on the FPMM contract.
+*   `returnAmount`: Amount of USDC desired *back*. The contract calculates how many outcome tokens are needed.
+*   `outcomeIndex`: Index of the token being sold.
+*   `maxOutcomeTokensToSell`: Maximum amount of the outcome token willing to sell to get `returnAmount` USDC (slippage protection). Transaction reverts if more is required.
+*   Requires outcome token approval (via `setApprovalForAll` to the CTF contract, allowing the FPMM to act) for the FPMM contract.
+
+### FPMM Deployments
+
+*   **Factory Contract (Polygon Mainnet):** `0x8b9805a2f595b6705e74f7310829f2d299d21522`
+*   **Factory Contract (Mumbai):** `0x5a80a64c8ae0551b09c3df377b60953872c5aa7f`
+*(Individual FPMM addresses are specific to each market).*
+
+### FPMM Resources
+
+*   **Source Code:** [Gnosis/conditional-tokens-market-makers](https://github.com/gnosis/conditional-tokens-market-makers) (or Polymarket's fork if customized)
+*   **Audit:** [Link on Gnosis repo/website or Polymarket docs](Link needed)
+
+---
+
+## Proxy Wallets
+
+### Overview
+
+Users trading via the Polymarket.com interface typically interact through a smart contract wallet (proxy) created on their first use.
+*   **Mechanism:** A 1-of-1 multisig wallet deployed to Polygon, owned/controlled by the user's EOA (Metamask/Browser Wallet or MagicLink-derived key).
+*   **Purpose:** Holds the user's USDC and conditional tokens (positions). Enables improved UX like gasless transactions (via relayers) and atomic execution of multi-step actions (e.g., buy involving split + swap).
+*   **Types:**
+    *   **Gnosis Safe:** Used for users connecting via MetaMask or other browser wallets.
+    *   **Polymarket Custom Proxy:** Used for users logging in via email (MagicLink).
+*   **Developer Access:** To programmatically access funds/positions held in a proxy wallet:
+    1.  **Use the Proxy:** Initialize the CLOB client (or interact directly with contracts) using the proxy address as the `funder` and the controlling EOA's private key as the `key`, setting the correct `signature_type` (1 for Magic, 2 for Gnosis Safe). Transactions are executed *through* the proxy.
+    2.  **Transfer Assets:** Use the controlling EOA to sign a transaction transferring assets (USDC, conditional tokens) from the proxy address to a different EOA or contract you control directly.
+
+### Proxy Factory Deployments (Polygon)
+
+*   **Gnosis Safe Factory:** `0xaacfeea03eb1561c4e67d661e40682bd20e3541b`
+*   **Polymarket Proxy Factory (MagicLink):** `0xaB45c5A4B0c941a2F231C04C3f49182e1A254052`
+*(Individual proxy addresses are unique to each user).*
+
+---
+
+## Negative Risk Markets
+
+### Overview
+
+Certain "winner-take-all" events (where only one outcome can possibly be true) may be deployed as "Negative Risk" markets.
+*   Indicated by the `negRisk: true` field on the Event object in the Gamma API.
+*   **Benefit:** Increased capital efficiency. A "NO" share in one market of the event can be trustlessly converted into one "YES" share of *every other* market within the same event.
+*   **Mechanism:** Uses a dedicated `NegativeAdapter` contract for the `convert` action.
+*   More details: [Polymarket Blog Post or Docs on Negative Risk (Link needed)]()
+
+### Augmented Negative Risk
+
+Addresses a limitation of standard negative risk where the full outcome universe must be known upfront. Useful for events where new, distinct possibilities might emerge later (e.g., election candidates).
+*   Indicated by `negRisk: true` AND `negRiskAugmented: true` on the Event object (Gamma API).
+*   **Structure:** Deploys with:
+    1.  Initially named outcomes (e.g., Candidate A, Candidate B).
+    2.  Placeholder outcomes (e.g., "Unnamed Person 1", "Unnamed Person 2").
+    3.  An explicit "Other" outcome.
+*   **Clarification Mechanism:** If a new relevant outcome appears (e.g., Candidate C enters race), the market creator can use the UMA **Bulletin Board** (see Resolution section) to clarify that "Unnamed Person 1" now represents "Candidate C".
+*   **Trading Implication:** Traders should generally only trade the *named* outcomes. Placeholder outcomes are effectively dormant until clarified. The "Other" outcome's definition implicitly changes as placeholders are assigned, making it risky to trade directly. Polymarket UI typically hides unclarified placeholder and "Other" outcomes in these events.
+*   **Resolution:** If the event resolves and the true outcome corresponds to an *unclarified* placeholder or falls into the residual "Other" category, the market should resolve to the explicit "Other" outcome token.
+
+---
+
+## Bug Bounty
+
+Polymarket maintains an active bug bounty program through Immunefi.
+*   **Scope:** Public smart contracts (Exchange, CTF Adapters, FPMMs, Proxies, etc.) and critical web application components (CLOB API, Gamma API, Website).
+*   **Reporting:** Submit all vulnerability reports via the official [Polymarket Bug Bounty Program on Immunefi](https://immunefi.com/bounty/polymarket/).
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+### CLOB Client Questions
+
+**Q: How do I initialize the `py-clob-client` correctly?**
+
+**A:** There are 3 main ways, depending on how your funds are held:
+
+1.  **Directly from EOA:**
+    *   Your private key `key` corresponds to the address holding USDC/tokens.
+    *   This address needs to set allowances for the Exchange contract.
+    *   Use default `signature_type=0`.
+    ```python
+    client = ClobClient(host="https://clob.polymarket.com/", key="0x_eoa_private_key", chain_id=137)
+    ```
+
+2.  **Using Polymarket Proxy (Email/MagicLink login):**
+    *   Your `key` is the private key exported from Magic associated with your email.
+    *   `funder` is the *address of your specific Polymarket Proxy contract* deployed for your account. Find this on Polygonscan linked from your account page.
+    *   Use `signature_type=1`.
+    ```python
+    client = ClobClient(host="https://clob.polymarket.com/", key="0x_magic_private_key", chain_id=137, signature_type=1, funder="0x_your_polymarket_proxy_address")
+    ```
+
+3.  **Using Polymarket Proxy (Browser Wallet/Metamask login):**
+    *   Your `key` is the private key of the browser wallet EOA that *controls* the proxy.
+    *   `funder` is the *address of your specific Gnosis Safe proxy contract* deployed for your account. Find this on Polygonscan linked from your account page.
+    *   Use `signature_type=2`.
+    ```python
+    client = ClobClient(host="https://clob.polymarket.com/", key="0x_browser_wallet_private_key", chain_id=137, signature_type=2, funder="0x_your_gnosis_safe_proxy_address")
+    ```
+
+*Remember to replace placeholders with your actual keys and addresses. Keep private keys secure!*
+
+### On-chain Questions
+
+**Q: How do I interpret the `OrderFilled` event emitted by the Exchange contract?**
+
+**A:** The `OrderFilled` event signifies a successful on-chain settlement of a matched trade. Let's break down its parameters using an example:
+
+```solidity
+event OrderFilled(
+    bytes32 indexed orderHash, // Hash of the maker's limit order being filled
+    address indexed maker,     // Address of the maker (funder providing liquidity)
+    address indexed taker,     // Address initiating the fill (can be another user or the Exchange for multi-fills)
+    uint256 makerAssetId,      // Token ID the maker GAVE UP. 0 if USDC (maker was BUYING outcome tokens).
+    uint256 takerAssetId,      // Token ID the maker RECEIVED. 0 if USDC (maker was SELLING outcome tokens).
+    uint256 makerAmountFilled, // Amount of makerAssetId the maker GAVE UP in this fill.
+    uint256 takerAmountFilled, // Amount of takerAssetId the maker RECEIVED in this fill.
+    uint256 fee                // Fee amount paid by the MAKER, denominated in the asset they RECEIVED (takerAssetId).
+);
+```
+
+**Example Breakdown:**
+
+```
+OrderFilled(
+    orderHash="0x53...",
+    maker="0x48...",           // Maker's funding address
+    taker="0xC5...",           // Taker's address (or Exchange)
+    makerAssetId=0,            // Maker gave USDC (since it's 0)
+    takerAssetId=217...55,     // Maker received Outcome Token ID 217...55
+    makerAmountFilled=12122310, // Maker gave 12.122310 USDC (assuming 6 decimals)
+    takerAmountFilled=24790000, // Maker received 24.790000 Outcome Tokens (assuming 6 decimals, check actual token decimals)
+    fee=0                      // Maker paid 0 fee (denominated in outcome tokens here)
+)
+```
+
+**Interpretation of Example:**
+*   The maker (`0x48...`) had a **BUY** limit order (`orderHash=0x53...`) because they gave USDC (`makerAssetId=0`) and received outcome tokens (`takerAssetId=217...`).
+*   This specific fill involved the maker paying 12.12 USDC (`makerAmountFilled`) to receive 24.79 outcome tokens (`takerAmountFilled`).
+*   The implied price for this fill (before fees) is `makerAmountFilled / takerAmountFilled` = `12.122310 / 24.790000` ≈ 0.489 USDC per token.
+*   The maker paid 0 fees (`fee=0`) on this fill, measured in the token they received (outcome tokens).
+
+**Key Points:**
+*   `makerAssetId == 0` implies the maker was **BUYING** outcome tokens.
+*   `takerAssetId == 0` implies the maker was **SELLING** outcome tokens.
+*   Amounts (`makerAmountFilled`, `takerAmountFilled`) need to be adjusted by the respective token's decimals (USDC usually 6, outcome tokens often 6 but verify).
+*   `fee` is denominated in the asset the *maker received* (`takerAssetId`).
+```

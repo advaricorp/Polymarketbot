@@ -670,7 +670,7 @@ The developers and contributors are not responsible for any financial losses inc
 
 <div align="center">
 
-**Built with ❤️ by the Polymarket Bot Community**
+**Built with ❤️ by Adrian V**
 
 [![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/advaricorp/Polymarketbot)
 [![Discord](https://img.shields.io/badge/Discord-7289DA?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/polymarketbot)
